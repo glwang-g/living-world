@@ -1,117 +1,188 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-type Agent = { name: string; role: string; trait: string; color: string; status: string; place: string };
-type LogEntry = { turn: number; place: string; text: string; tone?: "system" | "choice" };
-type AdventureLog = { place: string; text: string; tone?: "danger" | "choice" | "normal" };
+type TileType = "grass" | "tree" | "stone" | "water" | "dirt" | "wall" | "torch";
+type Tile = { type: TileType; discovered?: boolean };
+type Point = { x: number; y: number };
+type LogEntry = { day: number; text: string; tone?: "danger" | "build" | "system" };
+type Block = "wood" | "stone" | "dirt" | "torch";
+type ServerSnapshot = { tick: number; width: number; height: number; blocks: TileType[]; player: Point; hp: number; inventory: Record<Block, number>; monsters: Point[]; night: boolean };
+type ServerEvent = { tick: number; actor: string; kind: string; location: Point | null; text: string };
 
-const agents: Agent[] = [
-  { name: "阿岚", role: "采集者", trait: "热心但冲动", color: "#fa9c55", status: "在河边观察水位", place: "河边" },
-  { name: "小满", role: "农夫", trait: "安静而敏锐", color: "#75c5b9", status: "在营地整理种子", place: "营地" },
-  { name: "石头", role: "工匠", trait: "务实可靠", color: "#b88cde", status: "在工坊修理水泵", place: "工坊" },
-  { name: "月芽", role: "观察者", trait: "喜欢冒险", color: "#f5d36c", status: "刚从森林回来", place: "森林" },
-];
+const WIDTH = 20;
+const HEIGHT = 12;
+const blockInfo: Record<Block, { label: string; icon: string }> = { wood: { label: "木墙", icon: "▦" }, stone: { label: "石墙", icon: "◆" }, dirt: { label: "泥土", icon: "▪" }, torch: { label: "火把", icon: "♨" } };
 
-const places: Record<string, { title: string; description: string; exits: string[] }> = {
-  营地: { title: "营地", description: "火堆还亮着。小满把一排湿种子摊在木板上，远处有人在争论晚餐。", exits: ["森林", "工坊", "河边"] },
-  森林: { title: "森林", description: "潮湿的树叶遮住了天空。你听见更深处传来金属碰撞声，但看不见是谁。", exits: ["营地", "废墟"] },
-  工坊: { title: "工坊", description: "石头的工具铺满桌面。水泵拆开了一半，铜牌被压在图纸下面。", exits: ["营地", "河边"] },
-  河边: { title: "河边", description: "河床比昨天又低了一寸。阿岚蹲在裂缝旁，手里捏着一枚陌生的铜制徽记。", exits: ["营地", "工坊"] },
-  废墟: { title: "旧哨站", description: "坍塌的石墙上刻着和铜牌相同的徽记。这里不像是被遗弃，更像是有人刚离开。", exits: ["森林"] },
-};
-
-const history: Record<string, Array<{ day: string; title: string; text: string; truth?: boolean }>> = {
-  阿岚: [
-    { day: "第 1 日", title: "来到营地", text: "阿岚主动接过了第一批木材。他说自己不喜欢欠别人东西。" },
-    { day: "第 6 日", title: "第一次争执", text: "他和石头因为水泵的维修方案发生争吵，关系下降。", truth: true },
-    { day: "第 12 日", title: "河边的铜牌", text: "阿岚在干涸的河床发现了陌生徽记，但没有告诉聚落。" },
-    { day: "第 15 日", title: "隐瞒", text: "他把铜牌交给了小满。两人约定暂时不让石头知道。", truth: true },
-    { day: "现在", title: "河水退去", text: "阿岚正在等待你决定：把铜牌带回营地，还是继续调查河床。" },
-  ],
-  小满: [
-    { day: "第 1 日", title: "留下", text: "小满在第一场旱灾前留下来照料种子。" },
-    { day: "第 9 日", title: "藏起浆果", text: "她把最后一篮浆果藏了起来，没有告诉其他人。", truth: true },
-    { day: "第 15 日", title: "收到铜牌", text: "阿岚把铜牌交给小满。她似乎认得上面的图案。" },
-  ],
-};
-
-const initialLog: LogEntry[] = [
-  { turn: 18, place: "营地", text: "世界醒来。你站在火堆边，所有人都在忙自己的事。", tone: "system" },
-  { turn: 18, place: "营地", text: "小满抬头看你：“今天要去哪里？”" },
-];
-
-export default function Home() {
-  const [mode, setMode] = useState<"role" | "history" | "adventure">("role");
-  const [selected, setSelected] = useState("阿岚");
-  const [place, setPlace] = useState("营地");
-  const [turn, setTurn] = useState(18);
-  const [command, setCommand] = useState("");
-  const [log, setLog] = useState(initialLog);
-  const current = places[place];
-  const selectedAgent = agents.find((agent) => agent.name === selected) ?? agents[0];
-  const selectedHistory = history[selected] ?? history.阿岚;
-
-  const addLog = (text: string, nextPlace = place, tone?: LogEntry["tone"]) => {
-    setTurn((value) => value + 1);
-    setLog((value) => [...value, { turn: turn + 1, place: nextPlace, text, tone }]);
-  };
-
-  const move = (nextPlace: string) => {
-    if (!current.exits.includes(nextPlace)) return addLog(`你试图前往${nextPlace}，但这条路被倒下的树挡住了。`);
-    setPlace(nextPlace);
-    addLog(`你沿着小路走向${nextPlace}。`, nextPlace, "choice");
-  };
-
-  const perform = (action: string) => {
-    if (action === "observe") addLog(`${current.description}`);
-    if (action === "talk") addLog(selected === "阿岚" ? "阿岚把铜牌在指间翻了一面：“你觉得这个徽记，像不像某种路标？”" : `${selected}没有立刻回答。他正在忙着处理自己的事情。`);
-    if (action === "follow") addLog(`你决定跟着${selected}走。${selected}没有阻止你，但明显加快了脚步。`, selectedAgent.place);
-    if (action === "inspect") addLog(place === "河边" ? "你在裂缝里找到一小片蓝色漆片，和旧哨站墙上的颜色一致。" : "你仔细查看周围，没有发现新的线索。", undefined, "choice");
-  };
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    const value = command.trim();
-    if (!value) return;
-    const destination = Object.keys(places).find((name) => value.includes(name));
-    if (value.includes("观察")) perform("observe");
-    else if (value.includes("交谈") || value.includes("询问")) perform("talk");
-    else if (value.includes("跟随")) perform("follow");
-    else if (destination) move(destination);
-    else addLog(`你尝试“${value}”。这个世界还没有理解这个动作，但它记住了你的意图。`);
-    setCommand("");
-  };
-
-  const visibleAgents = useMemo(() => agents.filter((agent) => agent.place === place || agent.name === selected), [place, selected]);
-
-  return <main className="app-shell">
-    <header className="topbar"><div><p className="eyebrow">LIVING WORLD / MUD CHRONICLE</p><h1>苔原 · 第十八日</h1><span className="subtitle">一个正在发生、也值得被回看的小世界</span></div><div className="view-switch"><button className={mode === "role" ? "active" : ""} onClick={() => setMode("role")}>角色视角</button><button className={mode === "adventure" ? "active" : ""} onClick={() => setMode("adventure")}>冒险</button><button className={mode === "history" ? "active" : ""} onClick={() => setMode("history")}>历史视角</button></div></header>
-    {mode === "role" ? <>
-      <section className="mud-layout"><aside className="character-rail"><p className="eyebrow">你正在扮演</p><div className="hero-avatar" style={{ background: selectedAgent.color }}>{selected.slice(0, 1)}</div><h2>{selected}</h2><p>{selectedAgent.role} · {selectedAgent.trait}</p><div className="rail-rule"></div><p className="eyebrow">附近的人</p>{visibleAgents.map((agent) => <button className={`agent-row ${agent.name === selected ? "chosen" : ""}`} key={agent.name} onClick={() => setSelected(agent.name)}><i style={{ background: agent.color }}>{agent.name.slice(0, 1)}</i><span><strong>{agent.name}</strong><small>{agent.status}</small></span></button>)}<div className="rail-note">世界会继续行动。你不知道的事，不会因为你没看见就停止发生。</div></aside>
-        <section className="console"><div className="location-head"><div><p className="eyebrow">当前地点</p><h2>{current.title}</h2></div><span>第 {turn} 回合 · {selectedAgent.role}</span></div><p className="location-description">{current.description}</p><div className="log"><div className="log-label">行动记录</div>{log.slice(-8).map((entry, index) => <div className={`log-entry ${entry.tone ?? ""}`} key={`${entry.turn}-${index}`}><span className="log-meta">{entry.turn} · {entry.place}</span><p>{entry.text}</p></div>)}</div><form className="command-line" onSubmit={submit}><span>›</span><input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="输入动作，例如：去森林、观察、和阿岚交谈" aria-label="输入动作" /><button>执行</button></form><div className="quick-actions"><button onClick={() => perform("observe")}>观察这里</button><button onClick={() => perform("talk")}>和 {selected} 交谈</button><button onClick={() => perform("follow")}>跟随 {selected}</button><button onClick={() => perform("inspect")}>寻找线索</button></div></section>
-        <aside className="world-rail"><p className="eyebrow">地点出口</p>{current.exits.map((exit) => <button className="place-button" key={exit} onClick={() => move(exit)}><span>↗</span>{exit}</button>)}<div className="map-mini"><div className="map-path path-a"></div><div className="map-path path-b"></div><b className="map-place camp">营</b><b className="map-place forest">森</b><b className="map-place river">河</b><b className="map-place ruins">墟</b><i className="map-you">你</i></div><p className="eyebrow">聚落状态</p><div className="quiet-stats"><span>粮食 <b>86</b></span><span>士气 <b>71</b></span><span>关系 <b>4</b></span></div></aside></section>
-    </> : mode === "history" ? <section className="history-layout"><aside className="history-people"><p className="eyebrow">查看谁的历史</p>{agents.map((agent) => <button className={`history-person ${agent.name === selected ? "chosen" : ""}`} key={agent.name} onClick={() => setSelected(agent.name)}><i style={{ background: agent.color }}>{agent.name.slice(0, 1)}</i><span><strong>{agent.name}</strong><small>{agent.role}</small></span></button>)}<p className="history-warning">历史视角可以看到角色不知道的事。回到角色视角后，这些事实不会自动变成你的记忆。</p></aside><section className="chronicle"><div className="location-head"><div><p className="eyebrow">{selected} 的完整编年史</p><h2>一个人如何变成现在这样</h2></div><span>共 {selectedHistory.length} 个关键时刻</span></div><div className="timeline">{selectedHistory.map((item, index) => <article className={`timeline-item ${item.truth ? "revealed" : ""}`} key={`${item.day}-${item.title}`}><div className="timeline-dot"></div><span className="timeline-day">{item.day}</span><h3>{item.title}</h3><p>{item.text}</p>{item.truth && <em>角色当时并不知道</em>}</article>)}</div></section><aside className="history-summary"><p className="eyebrow">关系回声</p><h3>{selected} 与这个世界</h3><p>阿岚正在河边寻找答案。小满知道一部分真相，石头还在修理那台坏掉的水泵。</p><div className="relation-line"><span>阿岚</span><i></i><span>小满</span><b>秘密</b></div><div className="relation-line"><span>阿岚</span><i className="cold"></i><span>石头</span><b>不信任</b></div></aside></section> : <AdventureView hero={selected} onReturn={() => setMode("role")} />}
-  </main>;
+function makeWorld(): Tile[][] {
+  return Array.from({ length: HEIGHT }, (_, y) => Array.from({ length: WIDTH }, (_, x) => {
+    if (x === 0 || y === 0 || x === WIDTH - 1 || y === HEIGHT - 1) return { type: "water" };
+    if ((x * 11 + y * 7) % 23 === 0 || (x === 4 && y > 2 && y < 8)) return { type: "tree" };
+    if ((x * 5 + y * 13) % 29 === 0) return { type: "stone" };
+    if ((x * 3 + y * 5) % 17 === 0) return { type: "dirt" };
+    return { type: "grass" };
+  }));
 }
 
-function AdventureView({ hero, onReturn }: { hero: string; onReturn: () => void }) {
-  const [place, setPlace] = useState("森林边缘");
-  const [hp, setHp] = useState(3);
-  const [supplies, setSupplies] = useState(2);
-  const [clue, setClue] = useState(false);
-  const [resolved, setResolved] = useState(false);
-  const [log, setLog] = useState<AdventureLog[]>([
-    { place: "营地", text: `${hero} 带上火把和两份干粮，向森林里的旧哨站出发。` },
-    { place: "森林边缘", text: "树影合拢。前方有两条路：一条通往哨站，一条通往更深的林子。" },
-  ]);
-  const add = (text: string, nextPlace = place, tone: AdventureLog["tone"] = "normal") => setLog((current) => [...current, { place: nextPlace, text, tone }]);
-  const goOutpost = () => { setPlace("旧哨站"); add("你沿着带血的爪印来到旧哨站。石墙后传来低沉的喘息。", "旧哨站", "danger"); };
-  const inspect = () => { setClue(true); add("你发现灰鳞兽的左前爪受了伤。它不是在守卫，而是在保护巢里的幼崽。", "旧哨站", "choice"); };
-  const useTorch = () => { if (supplies < 1) return add("火把已经烧完了。", "旧哨站", "danger"); setSupplies((value) => value - 1); setResolved(true); add("你点燃火把照向石墙。灰鳞兽后退了，但没有攻击。它让出了一条路。", "旧哨站", "choice"); };
-  const feed = () => { if (supplies < 1) return add("你没有可以分享的食物。", "旧哨站", "danger"); setSupplies((value) => value - 1); setResolved(true); add("你把干粮放在地上。灰鳞兽嗅了很久，叼走食物后消失在阴影里。", "旧哨站", "choice"); };
-  const fight = () => { setHp((value) => Math.max(0, value - 1)); setResolved(true); add("你举起武器。短暂的搏斗后，灰鳞兽负伤逃入废墟，你也被抓伤了。", "旧哨站", "danger"); };
-  const retreat = () => { setPlace("森林边缘"); add("你退回森林边缘。身后的喘息声没有追来。", "森林边缘", "choice"); };
-  const finishText = hp === 0 ? "你倒在旧哨站前。幸好月芽找到了你，把你拖回了营地。" : resolved ? "你完成了这次探索。回到营地后，这件事会改变居民对森林的看法。" : "灰鳞兽还在石墙后。先观察，再决定要不要冒险。";
-  return <section className="adventure-shell"><div className="adventure-head"><div><p className="eyebrow">EXPEDITION / OLD WATCHTOWER</p><h2>森林里的旧哨站</h2><p>一次冒险不是为了刷掉一条血条，而是为了带回一个会改变聚落的故事。</p></div><button onClick={onReturn}>回到角色视角</button></div><div className="adventure-grid"><aside className="expedition-path"><p className="eyebrow">探索路线</p><div className={`path-step ${place === "森林边缘" ? "current" : "done"}`}><b>01</b><span>森林边缘<small>听见不属于人的声音</small></span></div><div className={`path-step ${place === "旧哨站" ? "current" : resolved ? "done" : ""}`}><b>02</b><span>旧哨站<small>灰鳞兽与废墟徽记</small></span></div><div className="path-step"><b>03</b><span>地下蓄水室<small>完成探索后解锁</small></span></div><div className="adventure-status"><span>体力 <b>{"♥".repeat(hp)}<i>{"♡".repeat(3 - hp)}</i></b></span><span>补给 <b>{supplies}</b></span><span>同行者 <b>{hero}</b></span></div></aside><section className="encounter"><div className="encounter-log">{log.map((entry, index) => <article className={entry.tone ?? ""} key={`${entry.place}-${index}`}><span>{entry.place}</span><p>{entry.text}</p></article>)}</div><div className="encounter-action"><p className="eyebrow">现在可以做什么</p>{place === "森林边缘" && <div className="action-grid"><button onClick={goOutpost}><strong>沿爪印前进</strong><small>去旧哨站寻找声音的来源</small></button><button onClick={() => add("你在树根下找到一块旧布条，上面绣着和铜牌相同的徽记。", "森林边缘", "choice")}><strong>调查树根</strong><small>先寻找线索，不急着冒险</small></button></div>}{place === "旧哨站" && !resolved && <div className="action-grid"><button onClick={inspect}><strong>观察灰鳞兽</strong><small>寻找弱点或它真正的目的</small></button><button onClick={useTorch}><strong>举起火把</strong><small>消耗 1 补给，逼它后退</small></button><button onClick={feed}><strong>投喂干粮</strong><small>消耗 1 补给，尝试和平解决</small></button><button className="danger-button" onClick={fight}><strong>直接战斗</strong><small>可能受伤，但能夺回通道</small></button><button onClick={retreat}><strong>撤退</strong><small>保留体力，之后再来</small></button></div>}{place === "旧哨站" && !resolved && clue && <p className="clue-note">线索：它在保护什么，而不是攻击什么。</p>}{resolved && <div className="outcome"><strong>{hp === 0 ? "探索失败，但故事没有结束" : "探索完成"}</strong><p>{finishText}</p><button onClick={onReturn}>把结果带回聚落</button></div>}</div></section></div></section>;
+const tileIcon: Record<TileType, string> = { grass: "", tree: "♣", stone: "◆", water: "≈", dirt: "▪", wall: "▦", torch: "♨" };
+const SAVE_KEY = "living-world:blockworld:v1";
+const initialLogs: LogEntry[] = [{ day: 1, text: "你在一片陌生的草地醒来。太阳正在落山，最好在夜晚前搭一面墙。", tone: "system" }];
+
+export default function Home() {
+  const [world, setWorld] = useState(makeWorld);
+  const [player, setPlayer] = useState<Point>({ x: 9, y: 6 });
+  const [hp, setHp] = useState(5);
+  const [inventory, setInventory] = useState<Record<Block, number>>({ wood: 6, stone: 3, dirt: 12, torch: 4 });
+  const [selected, setSelected] = useState<Block>("wood");
+  const [action, setAction] = useState<"break" | "place">("break");
+  const [tick, setTick] = useState(1);
+  const [speed, setSpeed] = useState(1);
+  const [running, setRunning] = useState(true);
+  const [mode, setMode] = useState<"world" | "history">("world");
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [showAllLogs, setShowAllLogs] = useState(false);
+  const [built, setBuilt] = useState(0);
+  const [monsters, setMonsters] = useState<Point[]>([]);
+  const [logs, setLogs] = useState<LogEntry[]>(initialLogs);
+  const [hydrated, setHydrated] = useState(false);
+  const [serverOnline, setServerOnline] = useState(false);
+  const day = Math.floor((tick - 1) / 24) + 1;
+  const hour = (tick - 1) % 24;
+  const night = hour >= 16 || hour < 5;
+  const currentTile = world[player.y]?.[player.x];
+
+  const applyServerSnapshot = (snapshot: ServerSnapshot) => {
+    setWorld(Array.from({ length: snapshot.height }, (_, y) => snapshot.blocks.slice(y * snapshot.width, (y + 1) * snapshot.width).map((type) => ({ type }))));
+    setPlayer(snapshot.player); setHp(snapshot.hp); setInventory(snapshot.inventory); setTick(snapshot.tick); setMonsters(snapshot.monsters); setServerOnline(true);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const sync = async () => {
+      try {
+        const response = await fetch("http://127.0.0.1:8787/api/snapshot", { cache: "no-store" });
+        if (!response.ok) throw new Error("world server unavailable");
+        const snapshot = await response.json() as ServerSnapshot;
+        const eventResponse = await fetch("http://127.0.0.1:8787/api/events", { cache: "no-store" });
+        const events = eventResponse.ok ? await eventResponse.json() as ServerEvent[] : [];
+        if (!cancelled) {
+          applyServerSnapshot(snapshot);
+          if (events.length) setLogs(events.slice(-40).map((event) => ({ day: Math.floor((event.tick - 1) / 24) + 1, text: event.text, tone: event.kind === "night" || event.kind === "spawn" || event.kind === "damage" ? "danger" : event.kind === "building" || event.kind === "mining" || event.kind === "inventory" ? "build" : "system" })));
+        }
+      } catch { if (!cancelled) setServerOnline(false); }
+    };
+    sync();
+    const interval = window.setInterval(sync, 1000);
+    return () => { cancelled = true; window.clearInterval(interval); };
+  }, []);
+
+  const sendCommand = async (payload: Record<string, string | number>): Promise<boolean> => {
+    if (!serverOnline) { log("世界服务尚未连接。请先启动 Rust world-server。", "danger"); return false; }
+    try {
+      const response = await fetch("http://127.0.0.1:8787/api/command", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      if (!response.ok) { log("世界服务拒绝了这个操作，请重启 world-server 后再试。", "danger"); return false; }
+      const result = await response.json() as { accepted?: boolean };
+      if (result.accepted !== true) { log("世界服务没有接受这个操作，请确认后端已更新。", "danger"); return false; }
+      return true;
+    } catch { setServerOnline(false); log("与世界服务的连接中断了。", "danger"); return false; }
+  };
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(SAVE_KEY);
+      if (saved) {
+        const data = JSON.parse(saved);
+        if (Array.isArray(data.world)) setWorld(data.world);
+        if (data.player) setPlayer(data.player);
+        if (typeof data.hp === "number") setHp(data.hp);
+        if (data.inventory) setInventory(data.inventory);
+        if (typeof data.selected === "string") setSelected(data.selected);
+        if (typeof data.action === "string") setAction(data.action);
+        if (typeof data.tick === "number") setTick(data.tick);
+        if (typeof data.built === "number") setBuilt(data.built);
+        if (Array.isArray(data.logs)) setLogs(data.logs);
+        if (Array.isArray(data.monsters)) setMonsters(data.monsters);
+      }
+    } catch {
+      // If an old or malformed save exists, start a clean game.
+    } finally {
+      setHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    window.localStorage.setItem(SAVE_KEY, JSON.stringify({ world, player, hp, inventory, selected, action, tick, built, logs, monsters }));
+  }, [hydrated, world, player, hp, inventory, selected, action, tick, built, logs, monsters]);
+
+  const log = (text: string, tone?: LogEntry["tone"]) => setLogs((current) => [...current, { day, text, tone }].slice(-40));
+  const resetGame = async () => {
+    if (!window.confirm("确定要放弃当前世界，从第一天重新开始吗？")) return;
+    if (serverOnline && !(await sendCommand({ command: "reset" }))) return;
+    window.localStorage.removeItem(SAVE_KEY);
+    setWorld(makeWorld()); setPlayer({ x: 9, y: 6 }); setHp(5); setInventory({ wood: 6, stone: 3, dirt: 12, torch: 4 }); setSelected("wood"); setAction("break"); setTick(6); setBuilt(0); setMonsters([]); setLogs(initialLogs); setRunning(true);
+  };
+  const canReach = (x: number, y: number) => Math.abs(x - player.x) <= 1 && Math.abs(y - player.y) <= 1 && !(x === player.x && y === player.y);
+
+  const move = (dx: number, dy: number) => {
+    if (serverOnline) {
+      const direction = dx === 1 ? "right" : dx === -1 ? "left" : dy === 1 ? "down" : "up";
+      void sendCommand({ command: "move", direction });
+      return;
+    }
+    const x = player.x + dx; const y = player.y + dy; const tile = world[y]?.[x];
+    if (!tile || tile.type === "water" || tile.type === "wall") return log("那里过不去。", "system");
+    setPlayer({ x, y });
+    if (monsters.some((monster) => monster.x === x && monster.y === y)) { setHp((value) => Math.max(0, value - 1)); log("黑暗里的东西撞上了你，你受了伤。", "danger"); }
+  };
+
+  const editTile = (x: number, y: number) => {
+    if (serverOnline) {
+      if (!canReach(x, y)) return log("你够不到那里。先走近一点。", "system");
+      void sendCommand(action === "break" ? { command: "break", x, y } : { command: "place", block: selected, x, y });
+      return;
+    }
+    if (!canReach(x, y)) return log("你够不到那里。先走近一点。", "system");
+    const tile = world[y][x];
+    if (action === "break") {
+      if (!["tree", "stone", "dirt", "wall", "torch"].includes(tile.type)) return log("这块草地什么也没有。", "system");
+      const gain: Partial<Record<Block, number>> = tile.type === "tree" ? { wood: 2 } : tile.type === "stone" ? { stone: 1 } : tile.type === "dirt" ? { dirt: 2 } : tile.type === "torch" ? { torch: 1 } : {};
+      setInventory((current) => ({ ...current, ...Object.fromEntries(Object.entries(gain).map(([key, value]) => [key, current[key as Block] + (value ?? 0)])) }));
+      setWorld((current) => current.map((row, rowIndex) => row.map((item, columnIndex) => rowIndex === y && columnIndex === x ? { type: "grass" } : item)));
+      log(`你挖掉了${tile.type === "tree" ? "一棵树" : tile.type === "stone" ? "一块石头" : "一块方块"}，材料掉落在脚边。`, "build");
+    } else {
+      if (inventory[selected] <= 0) return log(`你的${blockInfo[selected].label}用完了。`, "system");
+      if (tile.type !== "grass" && tile.type !== "dirt") return log("这里没有可以放置方块的空地。", "system");
+      const type: TileType = selected === "wood" ? "wall" : selected;
+      setWorld((current) => current.map((row, rowIndex) => row.map((item, columnIndex) => rowIndex === y && columnIndex === x ? { type } : item)));
+      setInventory((current) => ({ ...current, [selected]: current[selected] - 1 }));
+      setBuilt((value) => value + 1);
+      log(`你放置了${blockInfo[selected].label}。一个可以躲避夜晚的地方正在成形。`, "build");
+    }
+  };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (key === "w" || event.key === "ArrowUp") move(0, -1);
+      if (key === "s" || event.key === "ArrowDown") move(0, 1);
+      if (key === "a" || event.key === "ArrowLeft") move(-1, 0);
+      if (key === "d" || event.key === "ArrowRight") move(1, 0);
+      if (key === "e") setAction("break");
+      if (key === "q") setAction("place");
+      if (event.key === "?") setHelpOpen(true);
+      if (event.key === "Escape") setHelpOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
+  const objective = built >= 8 ? "你已经有了一处可以过夜的 shelter。" : night ? "夜晚来了：点亮火把，或继续冒险。" : `在夜晚前搭建避难所（还需要 ${Math.max(0, 8 - built)} 个方块）`;
+  const nearby = useMemo(() => [world[player.y]?.[player.x - 1], world[player.y]?.[player.x + 1], world[player.y - 1]?.[player.x], world[player.y + 1]?.[player.x]].filter(Boolean).map((tile) => tile?.type).filter((type) => type !== "grass"), [world, player]);
+
+  return <main className="app-shell">
+    <header className="topbar"><div><p className="eyebrow">LIVING WORLD / BLOCKWORLD MVP</p><h1>苔原 · 第 {day} 天</h1><span className="subtitle">Rust 世界服务：{serverOnline ? "已连接，世界持续运行" : "未连接，请启动 world-server"}</span></div><div className="view-switch"><button className="help-button" onClick={() => setHelpOpen((value) => !value)}>❔ 新手说明</button><button className={mode === "world" ? "active" : ""} onClick={() => setMode("world")}>生存视角</button><button className={mode === "history" ? "active" : ""} onClick={() => setMode("history")}>世界历史</button></div></header>
+    {helpOpen && <section className="tutorial" role="dialog" aria-label="新手说明"><div><p className="eyebrow">HOW TO PLAY</p><h2>三分钟了解这个世界</h2></div><button className="tutorial-close" onClick={() => setHelpOpen(false)}>关闭 ×</button><div className="tutorial-steps"><article><b>01</b><strong>先移动</strong><p>用 <kbd>WASD</kbd> 或方向键在方块世界里走动。你只能操作身边一格的方块。</p></article><article><b>02</b><strong>再挖掘</strong><p>保持“挖掘”模式，点击相邻的树、石头或泥土，把材料放进背包。</p></article><article><b>03</b><strong>最后建造</strong><p>选择一种材料，切到“放置”，点击身边的空地。天黑前搭出避难所。</p></article><article><b>❗</b><strong>注意夜晚</strong><p>地图变暗时，怪物会出现。可以点火把、躲进墙后，或先暂停熟悉操作。</p></article></div></section>}
+    {mode === "world" ? <section className="game-layout"><aside className="game-sidebar"><div className="status-card"><div className="avatar-player">你</div><h2>流浪者</h2><p>{night ? "❗ 夜晚 · 危险正在靠近" : "☀ 白天 · 适合探索和建造"}</p><div className="hearts">{"♥".repeat(hp)}<i>{"♡".repeat(5 - hp)}</i></div></div><div className="goal-card"><p className="eyebrow">❗ 当前目标</p><strong>{objective}</strong><small>附近：{nearby.length ? nearby.join("、") : "安静的草地"}</small></div><div className="inventory-card"><p className="eyebrow">背包</p>{(Object.keys(blockInfo) as Block[]).map((block) => <button title={`选择${blockInfo[block].label}`} className={`inventory-item ${selected === block ? "selected" : ""}`} key={block} onClick={() => setSelected(block)}><b>{blockInfo[block].icon}</b><span>{blockInfo[block].label}</span><em>{inventory[block]}</em></button>)}</div><div className="controls-card"><p className="eyebrow">操作</p><span><kbd>WASD</kbd> / 方向键移动</span><span><kbd>E</kbd> 挖掘　<kbd>Q</kbd> 放置</span><span>点击相邻方块执行动作</span><button className="mini-help" onClick={() => setHelpOpen(true)}>❔ 再看一遍教学</button><button className="mini-reset" onClick={resetGame}>重新开始这个世界</button></div></aside><section className="world-console"><div className="world-toolbar"><div><span className={`sun-dot ${night ? "moon" : ""}`}></span>{night ? "夜晚" : "白天"} · {String(hour).padStart(2, "0")}:00</div><div className="tool-toggle"><button className={action === "break" ? "active" : ""} onClick={() => setAction("break")}>挖掘</button><button className={action === "place" ? "active" : ""} onClick={() => setAction("place")}>放置 {blockInfo[selected].icon}</button><button disabled={!serverOnline} onClick={() => setServerOnline(false)}>{serverOnline ? "服务端运行中" : "等待服务端"}</button></div></div><div className={`block-world ${night ? "night" : ""}`} aria-label="可以移动和编辑的方块世界">{world.map((row, y) => row.map((tile, x) => { const monster = monsters.some((item) => item.x === x && item.y === y); const isPlayer = player.x === x && player.y === y; return <button key={`${x}-${y}`} className={`block-tile ${tile.type} ${isPlayer ? "player" : ""} ${monster ? "monster" : ""}`} onClick={() => editTile(x, y)} aria-label={`${x},${y} ${tile.type}`}>{isPlayer ? "●" : monster ? "☠" : tileIcon[tile.type]}</button>; }))}</div><div className="world-hint">{serverOnline ? (action === "break" ? "靠近一个资源方块，点击它来挖掘" : `靠近空地，点击放置${blockInfo[selected].label}`) : "等待 Rust world-server 连接后才能操作"} · 当前位置 {player.x},{player.y}</div><div className="log-strip"><div className="log-strip-head"><span>世界事件 · {logs.length}</span><button onClick={() => setShowAllLogs((value) => !value)}>{showAllLogs ? "收起" : "查看更多"}</button></div><div className={showAllLogs ? "log-list expanded" : "log-list"}>{logs.slice(showAllLogs ? -40 : -5).reverse().map((entry, index) => <p className={entry.tone ?? ""} key={`${entry.day}-${index}`}>第{entry.day}天　{entry.text}</p>)}</div></div></section></section> : <section className="history-page"><div className="history-head"><div><p className="eyebrow">WORLD EVENT STREAM</p><h2>这个世界是怎样被改变的</h2></div><span>所有行动都会留下记录</span></div><div className="history-grid"><div className="history-timeline">{logs.map((entry, index) => <article className={entry.tone ?? ""} key={`${entry.day}-${index}`}><span>第 {entry.day} 天</span><p>{entry.text}</p></article>)}</div><aside className="future-card"><p className="eyebrow">未来接口</p><h3>居民与自动化</h3><p>下一层可以让居民读取这条事件流：他们会看到你砍过的树、建过的墙，也会对夜晚留下自己的记忆。</p><p>再往后，玩家可以把重复动作交给可编程代理，逐渐走向 Screeps 的基地与自动化。</p><button onClick={() => setMode("world")}>回到世界</button></aside></div></section>}
+  </main>;
 }
