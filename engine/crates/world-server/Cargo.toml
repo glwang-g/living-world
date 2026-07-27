@@ -1,0 +1,13 @@
+[package]
+name = "world-server"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "world-server"
+path = "src/main.rs"
+
+[dependencies]
+world-core = { path = "../world-core" }
+world-runner = { path = "../world-runner" }
+world-protocol = { path = "../world-protocol" }

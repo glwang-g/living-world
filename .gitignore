@@ -52,3 +52,5 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+/engine/target/
+/engine/data/

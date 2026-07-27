@@ -1,0 +1,13 @@
+[workspace]
+members = [
+  "crates/world-protocol",
+  "crates/world-core",
+  "crates/world-bot",
+  "crates/world-runner",
+  "crates/world-server",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"

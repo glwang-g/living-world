@@ -1,0 +1,9 @@
+[package]
+name = "world-runner"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+world-bot = { path = "../world-bot" }
+world-core = { path = "../world-core" }
+world-protocol = { path = "../world-protocol" }

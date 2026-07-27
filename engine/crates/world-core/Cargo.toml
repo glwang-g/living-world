@@ -1,0 +1,7 @@
+[package]
+name = "world-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+world-protocol = { path = "../world-protocol" }

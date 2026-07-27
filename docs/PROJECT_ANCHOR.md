@@ -53,3 +53,37 @@
 4. 记录统一事件流，并为角色视角/历史视角提供不同投影。
 5. 让一个简单居民读取机关和资源状态，执行采集或回家行为。
 
+## Rust 引擎边界
+
+同级的 `swarm-space` 已验证过一套适合本项目的分层，当前原型已经放入
+`engine/`：
+
+```text
+world-core      权威世界状态与规则
+world-runner    持续 tick、命令调度和 bot 调度
+world-bot       Observation → Intent 的受限代理接口
+world-protocol  命令、事件、观察和快照 DTO
+app/            浏览器 space，只负责观察和输入
+```
+
+`app/` 不应该成为世界状态的最终权威。未来浏览器刷新、关闭或断开时，
+`world-runner` 仍应继续推进世界；客户端重新连接时只获取快照和事件流。
+
+Rust 原型当前支持无头方块世界、玩家命令、昼夜事件、怪物生成、基础 bot
+和确定性测试。后续优先把它接成长期运行的服务，再让当前页面从服务端读取
+`WorldSnapshot`，不要把更多权威规则继续堆回 React 状态。
+
+当前已经有 `world-server` 最小服务：
+
+```bash
+npm run world:server
+npm run dev
+```
+
+服务端监听 `127.0.0.1:8787`，浏览器通过 `/api/snapshot` 读取状态、通过
+`/api/command` 发送操作。浏览器关闭后，服务端仍按秒推进世界。
+
+服务端数据位于 `engine/data/`：`world.snapshot` 是可恢复的当前快照，
+`world.events.log` 是追加式事件记录。macOS 可以用
+`sh scripts/install-world-server-macos.sh` 注册为 launchd 用户后台服务，
+用 `sh scripts/uninstall-world-server-macos.sh` 移除服务而保留数据。
