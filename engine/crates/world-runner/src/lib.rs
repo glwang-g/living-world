@@ -17,7 +17,7 @@ impl WorldRunner {
     pub fn command(&mut self, command: PlayerCommand) { self.world.apply(command); }
     pub fn step(&mut self) -> (WorldSnapshot, Vec<WorldEvent>) {
         if let Some(bot) = &mut self.bot {
-            let intent = bot.decide(&self.world.observation());
+            let intent = bot.decide(&self.world.observation(1));
             self.world.apply(match intent { Intent::Move(direction) => PlayerCommand::Move(direction), Intent::Break => PlayerCommand::BreakAt(self.world.snapshot().player), Intent::Place(block) => PlayerCommand::PlaceAt(self.world.snapshot().player, block), Intent::Wait => PlayerCommand::Wait });
         }
         self.world.tick();

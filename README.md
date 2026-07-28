@@ -1,5 +1,7 @@
 # 苔原：Living World MVP
 
+> 接手开发前请先阅读 [`docs/DEVELOPMENT_LOG.md`](docs/DEVELOPMENT_LOG.md)，了解当前 ComputerScienceWorld 方块世界方向和最近增量；再阅读 [`docs/PROJECT_ANCHOR.md`](docs/PROJECT_ANCHOR.md)。
+
 一个可互动的小聚落原型。居民会自行平衡饱腹、精力和社交需求；资源、天气与公共设施会改变他们的选择，也会累积为聚落故事。
 
 ## 试玩
