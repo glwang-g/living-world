@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use world_protocol::{Block, Direction, EventRecord, Inventory, PlaceBlock, PlayerCommand, Pos, WorldEvent, WorldSnapshot};
+use world_protocol::{Block, Direction, EventRecord, Inventory, Observation, PlaceBlock, PlayerCommand, Pos, WorldEvent, WorldSnapshot};
 use world_runner::WorldRunner;
 
 const ADDRESS: &str = "127.0.0.1:8787";
@@ -102,7 +102,7 @@ fn handle_connection(mut stream: TcpStream, runner: Arc<Mutex<WorldRunner>>, per
     let method = first_line.next().unwrap_or_default(); let path = first_line.next().unwrap_or_default();
     let (status, response) = match (method, path) {
         ("OPTIONS", "/api/command") => ("204 No Content", String::new()),
-        ("GET", "/api/snapshot") => { let snapshot = runner.lock().expect("world runner lock").world.snapshot(); ("200 OK", snapshot_json(&snapshot)) }
+        ("GET", "/api/snapshot") => { let observation = runner.lock().expect("world runner lock").world.observation(6); ("200 OK", observation_json(&observation)) }
         ("GET", "/api/events") => ("200 OK", events_json(&persistence.events)),
         ("POST", "/api/command") => {
             if let Some(command) = parse_command(body) {
@@ -134,29 +134,29 @@ fn announce_new_world() {
 
 fn save_snapshot(path: &Path, snapshot: &WorldSnapshot) -> std::io::Result<()> {
     let temporary = path.with_extension("snapshot.tmp"); let mut file = std::fs::File::create(&temporary)?;
-    writeln!(file, "tick={}", snapshot.tick)?; writeln!(file, "size={}x{}", snapshot.width, snapshot.height)?; writeln!(file, "player={},{},{},{}", snapshot.player.x, snapshot.player.y, snapshot.hp, snapshot.night)?;
+    writeln!(file, "tick={}", snapshot.tick)?; writeln!(file, "player={},{},{},{}", snapshot.player.x, snapshot.player.y, snapshot.hp, snapshot.night)?;
     writeln!(file, "inventory={},{},{},{}", snapshot.inventory.wood, snapshot.inventory.stone, snapshot.inventory.dirt, snapshot.inventory.torch)?;
-    writeln!(file, "blocks={}", snapshot.blocks.iter().map(|block| block_name(*block)).collect::<Vec<_>>().join(","))?;
+    writeln!(file, "modified={}", snapshot.modified.iter().map(|(pos, block)| format!("{},{},{}", pos.x, pos.y, block_name(*block))).collect::<Vec<_>>().join(";"))?;
     writeln!(file, "monsters={}", snapshot.monsters.iter().map(|pos| format!("{},{}", pos.x, pos.y)).collect::<Vec<_>>().join(";"))?;
     file.sync_all()?; fs::rename(temporary, path)
 }
 
 fn load_snapshot(path: &Path) -> Option<WorldSnapshot> {
     let text = fs::read_to_string(path).ok()?; let value = |prefix: &str| text.lines().find_map(|line| line.strip_prefix(prefix));
-    let tick = value("tick=")?.parse().ok()?; let size = value("size=")?.split_once('x')?; let width = size.0.parse().ok()?; let height = size.1.parse().ok()?;
+    let tick = value("tick=")?.parse().ok()?;
     let player = value("player=")?.split(',').collect::<Vec<_>>(); if player.len() != 4 { return None; }
     let inventory = value("inventory=")?.split(',').collect::<Vec<_>>(); if inventory.len() != 4 { return None; }
-    let blocks = value("blocks=")?.split(',').filter_map(parse_block).collect::<Vec<_>>(); if blocks.len() != (width * height) as usize { return None; }
+    let modified = value("modified=").unwrap_or_default().split(';').filter_map(|entry| { let parts = entry.split(',').collect::<Vec<_>>(); if parts.len() != 3 { return None; } Some((Pos::new(parts[0].parse().ok()?, parts[1].parse().ok()?), parse_block(parts[2])?)) }).collect();
     let monsters = value("monsters=").unwrap_or_default().split(';').filter_map(|pair| { let (x, y) = pair.split_once(',')?; Some(Pos::new(x.parse().ok()?, y.parse().ok()?)) }).collect();
-    Some(WorldSnapshot { tick, width, height, blocks, player: Pos::new(player[0].parse().ok()?, player[1].parse().ok()?), hp: player[2].parse().ok()?, night: player[3].parse().ok()?, inventory: Inventory { wood: inventory[0].parse().ok()?, stone: inventory[1].parse().ok()?, dirt: inventory[2].parse().ok()?, torch: inventory[3].parse().ok()? }, monsters })
+    Some(WorldSnapshot { tick, player: Pos::new(player[0].parse().ok()?, player[1].parse().ok()?), hp: player[2].parse().ok()?, night: player[3].parse().ok()?, inventory: Inventory { wood: inventory[0].parse().ok()?, stone: inventory[1].parse().ok()?, dirt: inventory[2].parse().ok()?, torch: inventory[3].parse().ok()? }, monsters, modified })
 }
 
 fn parse_command(body: &str) -> Option<PlayerCommand> { let command = string_field(body, "command")?; match command.as_str() { "move" => match string_field(body, "direction")?.as_str() { "up" => Some(PlayerCommand::Move(Direction::Up)), "down" => Some(PlayerCommand::Move(Direction::Down)), "left" => Some(PlayerCommand::Move(Direction::Left)), "right" => Some(PlayerCommand::Move(Direction::Right)), _ => None }, "break" => Some(PlayerCommand::BreakAt(Pos::new(number_field(body, "x")?, number_field(body, "y")?))), "place" => { let block = match string_field(body, "block")?.as_str() { "wood" => PlaceBlock::WoodWall, "stone" => PlaceBlock::Stone, "dirt" => PlaceBlock::Dirt, "torch" => PlaceBlock::Torch, _ => return None }; Some(PlayerCommand::PlaceAt(Pos::new(number_field(body, "x")?, number_field(body, "y")?), block)) }, "wait" => Some(PlayerCommand::Wait), "reset" => Some(PlayerCommand::Reset), _ => None } }
 fn string_field(body: &str, name: &str) -> Option<String> { let marker = format!("\"{name}\":\""); let start = body.find(&marker)? + marker.len(); let end = body[start..].find('"')? + start; Some(body[start..end].to_string()) }
 fn number_field(body: &str, name: &str) -> Option<i32> { let marker = format!("\"{name}\":"); let start = body.find(&marker)? + marker.len(); let end = body[start..].find(|character: char| !character.is_ascii_digit() && character != '-').map(|offset| start + offset).unwrap_or(body.len()); body[start..end].parse().ok() }
 fn parse_block(value: &str) -> Option<Block> { Some(match value { "grass" => Block::Grass, "tree" => Block::Tree, "stone" => Block::Stone, "water" => Block::Water, "dirt" => Block::Dirt, "wall" => Block::Wall, "torch" => Block::Torch, _ => return None }) }
-fn block_name(block: Block) -> &'static str { match block { Block::Grass => "grass", Block::Tree => "tree", Block::Stone => "stone", Block::Water => "water", Block::Dirt => "dirt", Block::Wall => "wall", Block::Torch => "torch" } }
-fn snapshot_json(snapshot: &WorldSnapshot) -> String { let blocks = snapshot.blocks.iter().map(|block| format!("\"{}\"", block_name(*block))).collect::<Vec<_>>().join(","); let monsters = snapshot.monsters.iter().map(|pos| format!("{{\"x\":{},\"y\":{}}}", pos.x, pos.y)).collect::<Vec<_>>().join(","); format!("{{\"tick\":{},\"width\":{},\"height\":{},\"blocks\":[{}],\"player\":{{\"x\":{},\"y\":{}}},\"hp\":{},\"inventory\":{{\"wood\":{},\"stone\":{},\"dirt\":{},\"torch\":{}}},\"monsters\":[{}],\"night\":{}}}", snapshot.tick, snapshot.width, snapshot.height, blocks, snapshot.player.x, snapshot.player.y, snapshot.hp, snapshot.inventory.wood, snapshot.inventory.stone, snapshot.inventory.dirt, snapshot.inventory.torch, monsters, snapshot.night) }
+fn block_name(block: Block) -> &'static str { match block { Block::Grass => "grass", Block::Tree => "tree", Block::Stone => "stone", Block::Water => "water", Block::Dirt => "dirt", Block::Wall => "wall", Block::Torch => "torch", Block::Unknown => "unknown" } }
+fn observation_json(observation: &Observation) -> String { let blocks = observation.nearby.iter().map(|(_, block)| format!("\"{}\"", block_name(*block))).collect::<Vec<_>>().join(","); let monsters = observation.monsters.iter().map(|pos| format!("{{\"x\":{},\"y\":{}}}", pos.x, pos.y)).collect::<Vec<_>>().join(","); let sounds = observation.sounds.iter().map(|sound| format!("\"{}\"", json_escape(sound))).collect::<Vec<_>>().join(","); format!("{{\"tick\":{},\"origin_x\":{},\"origin_y\":{},\"width\":{},\"height\":{},\"blocks\":[{}],\"player\":{{\"x\":{},\"y\":{}}},\"hp\":{},\"inventory\":{{\"wood\":{},\"stone\":{},\"dirt\":{},\"torch\":{}}},\"monsters\":[{}],\"sounds\":[{}],\"night\":{}}}", observation.tick, observation.origin.x, observation.origin.y, observation.width, observation.height, blocks, observation.self_pos.x, observation.self_pos.y, observation.hp, observation.inventory.wood, observation.inventory.stone, observation.inventory.dirt, observation.inventory.torch, monsters, sounds, observation.night) }
 
 fn event_record(tick: u64, event: &WorldEvent) -> EventRecord { let (actor, kind, location, text) = match event { WorldEvent::Moved { from, to } => ("player", "movement", Some(*to), format!("你从 ({},{}) 走到了 ({},{})。", from.x, from.y, to.x, to.y)), WorldEvent::BlockBroken { pos, block } => ("player", "mining", Some(*pos), format!("你在 ({},{}) 挖掉了 {}。", pos.x, pos.y, block_name(*block))), WorldEvent::BlockPlaced { pos, block } => ("player", "building", Some(*pos), format!("你在 ({},{}) 放置了 {}。", pos.x, pos.y, block_name(*block))), WorldEvent::ItemCollected { item, amount } => ("player", "inventory", None, format!("你获得了 {} ×{}。", place_name(*item), amount)), WorldEvent::NightStarted => ("world", "night", None, "夜晚降临，黑暗里的东西醒来了。".into()), WorldEvent::Dawn => ("world", "dawn", None, "太阳升起，森林恢复了安静。".into()), WorldEvent::MonsterSpawned { pos } => ("monster", "spawn", Some(*pos), format!("一个怪物在 ({},{}) 出现了。", pos.x, pos.y)), WorldEvent::PlayerHurt { hp } => ("player", "damage", None, format!("你受伤了，剩余生命 {}。", hp)), WorldEvent::Message(message) => ("world", "message", None, message.clone()) }; EventRecord { tick, actor: actor.into(), kind: kind.into(), location, text } }
 fn place_name(item: PlaceBlock) -> &'static str { match item { PlaceBlock::WoodWall => "木材", PlaceBlock::Stone => "石头", PlaceBlock::Dirt => "泥土", PlaceBlock::Torch => "火把" } }

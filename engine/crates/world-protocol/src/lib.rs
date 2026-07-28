@@ -22,7 +22,7 @@ impl Direction {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Block { Grass, Tree, Stone, Water, Dirt, Wall, Torch }
+pub enum Block { Grass, Tree, Stone, Water, Dirt, Wall, Torch, Unknown }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PlaceBlock { WoodWall, Stone, Dirt, Torch }
@@ -66,21 +66,25 @@ pub struct Inventory {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorldSnapshot {
     pub tick: u64,
-    pub width: u32,
-    pub height: u32,
-    pub blocks: Vec<Block>,
     pub player: Pos,
     pub hp: u8,
     pub inventory: Inventory,
     pub monsters: Vec<Pos>,
     pub night: bool,
+    pub modified: Vec<(Pos, Block)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Observation {
     pub tick: u64,
+    pub origin: Pos,
+    pub width: u32,
+    pub height: u32,
     pub self_pos: Pos,
+    pub hp: u8,
     pub night: bool,
     pub inventory: Inventory,
     pub nearby: Vec<(Pos, Block)>,
+    pub monsters: Vec<Pos>,
+    pub sounds: Vec<String>,
 }
