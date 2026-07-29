@@ -1,22 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 type TileType = "grass" | "tree" | "stone" | "water" | "dirt" | "wall" | "torch" | "unknown";
 type Tile = { type: TileType; discovered?: boolean };
 type Point = { x: number; y: number };
 type LogEntry = { day: number; text: string; tone?: "danger" | "build" | "system" };
 type Block = "wood" | "stone" | "dirt" | "torch";
-type ServerSnapshot = { tick: number; origin_x: number; origin_y: number; width: number; height: number; blocks: TileType[]; player: Point; hp: number; inventory: Record<Block, number>; monsters: Point[]; sounds: string[]; night: boolean };
+type ServerSnapshot = { tick: number; origin_x: number; origin_y: number; width: number; height: number; blocks: TileType[]; player: Point; hp: number; inventory: Record<Block, number>; monsters: Point[]; sounds: string[]; night: boolean; sheltered: boolean; torch_lit: boolean };
 type ServerEvent = { tick: number; actor: string; kind: string; location: Point | null; text: string };
 
-const WIDTH = 13;
-const HEIGHT = 13;
+const DEFAULT_WORLD_SIZE = 13;
 const blockInfo: Record<Block, { label: string; icon: string }> = { wood: { label: "木墙", icon: "🪵" }, stone: { label: "石墙", icon: "⛰️" }, dirt: { label: "泥土", icon: "🟫" }, torch: { label: "火把", icon: "🔥" } };
 
 function makeWorld(): Tile[][] {
-  return Array.from({ length: HEIGHT }, (_, y) => Array.from({ length: WIDTH }, (_, x) => {
-    if (x === 0 || y === 0 || x === WIDTH - 1 || y === HEIGHT - 1) return { type: "water" };
+  return Array.from({ length: DEFAULT_WORLD_SIZE }, (_, y) => Array.from({ length: DEFAULT_WORLD_SIZE }, (_, x) => {
+    if (x === 0 || y === 0 || x === DEFAULT_WORLD_SIZE - 1 || y === DEFAULT_WORLD_SIZE - 1) return { type: "water" };
     if ((x * 11 + y * 7) % 23 === 0 || (x === 4 && y > 2 && y < 8)) return { type: "tree" };
     if ((x * 5 + y * 13) % 29 === 0) return { type: "stone" };
     if ((x * 3 + y * 5) % 17 === 0) return { type: "dirt" };
@@ -24,7 +23,7 @@ function makeWorld(): Tile[][] {
   }));
 }
 
-const tileIcon: Record<TileType, string> = { grass: "", tree: "🌲", stone: "⛰️", water: "≈", dirt: "🟫", wall: "🧱", torch: "🔥", unknown: "░" };
+const tileIcon: Record<TileType, string> = { grass: "", tree: "🌲", stone: "⛰️", water: "≈", dirt: "🟫", wall: "🧱", torch: "🔥", unknown: "" };
 const SAVE_KEY = "living-world:blockworld:v1";
 const initialLogs: LogEntry[] = [{ day: 1, text: "你在一片陌生的草地醒来。太阳正在落山，最好在夜晚前搭一面墙。", tone: "system" }];
 
@@ -43,10 +42,17 @@ export default function Home() {
   const [built, setBuilt] = useState(0);
   const [monsters, setMonsters] = useState<Point[]>([]);
   const [sounds, setSounds] = useState<string[]>([]);
+  const [sheltered, setSheltered] = useState(false);
+  const [torchLit, setTorchLit] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>(initialLogs);
   const [notice, setNotice] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [serverOnline, setServerOnline] = useState(false);
+  const [initialSyncComplete, setInitialSyncComplete] = useState(false);
+  const [viewColumns, setViewColumns] = useState(13);
+  const [viewRows, setViewRows] = useState(13);
+  const [coordinatesVisible, setCoordinatesVisible] = useState(false);
+  const [hoveredCoordinate, setHoveredCoordinate] = useState<Point | null>(null);
   const cameraOriginRef = useRef<Point | null>(null);
   const worldRef = useRef(world);
   const noticeTimerRef = useRef<number | null>(null);
@@ -57,9 +63,12 @@ export default function Home() {
   const applyServerSnapshot = (snapshot: ServerSnapshot) => {
     const serverOrigin = { x: snapshot.origin_x, y: snapshot.origin_y };
     const currentOrigin = cameraOriginRef.current ?? serverOrigin;
+    const centerX = Math.floor(snapshot.width / 2); const centerY = Math.floor(snapshot.height / 2);
     const playerAt = { x: snapshot.player.x - currentOrigin.x, y: snapshot.player.y - currentOrigin.y };
-    const shouldPan = playerAt.x < 3 || playerAt.x > WIDTH - 4 || playerAt.y < 3 || playerAt.y > HEIGHT - 4;
-    const origin = shouldPan ? { x: snapshot.player.x - 6, y: snapshot.player.y - 6 } : currentOrigin;
+    const edgeMarginX = Math.max(2, Math.floor(snapshot.width * 0.23)); const edgeMarginY = Math.max(2, Math.floor(snapshot.height * 0.23));
+    const resized = snapshot.width !== (worldRef.current[0]?.length ?? 0) || snapshot.height !== worldRef.current.length;
+    const shouldPan = resized || playerAt.x < edgeMarginX || playerAt.x > snapshot.width - 1 - edgeMarginX || playerAt.y < edgeMarginY || playerAt.y > snapshot.height - 1 - edgeMarginY;
+    const origin = shouldPan ? { x: snapshot.player.x - centerX, y: snapshot.player.y - centerY } : currentOrigin;
     cameraOriginRef.current = origin;
 
     const incoming = new Map<string, TileType>();
@@ -68,7 +77,7 @@ export default function Home() {
       const y = serverOrigin.y + Math.floor(index / snapshot.width);
       incoming.set(`${x},${y}`, type);
     });
-    const nextWorld = Array.from({ length: HEIGHT }, (_, y) => Array.from({ length: WIDTH }, (_, x) => {
+    const nextWorld = Array.from({ length: snapshot.height }, (_, y) => Array.from({ length: snapshot.width }, (_, x) => {
       const absolute = `${origin.x + x},${origin.y + y}`;
       const observed = incoming.get(absolute);
       if (observed) return { type: observed };
@@ -78,14 +87,14 @@ export default function Home() {
     worldRef.current = nextWorld;
     setWorld(nextWorld);
     setWorldOrigin(origin);
-    setPlayer({ x: snapshot.player.x - origin.x, y: snapshot.player.y - origin.y }); setHp(snapshot.hp); setInventory(snapshot.inventory); setTick(snapshot.tick); setMonsters(snapshot.monsters.map((monster) => ({ x: monster.x - origin.x, y: monster.y - origin.y }))); setSounds(snapshot.sounds); setServerOnline(true);
+    setPlayer({ x: snapshot.player.x - origin.x, y: snapshot.player.y - origin.y }); setHp(snapshot.hp); setInventory(snapshot.inventory); setTick(snapshot.tick); setMonsters(snapshot.monsters.map((monster) => ({ x: monster.x - origin.x, y: monster.y - origin.y }))); setSounds(snapshot.sounds); setSheltered(snapshot.sheltered); setTorchLit(snapshot.torch_lit); setServerOnline(true);
   };
 
   useEffect(() => {
     let cancelled = false;
     const sync = async () => {
       try {
-        const response = await fetch("http://127.0.0.1:8787/api/snapshot", { cache: "no-store" });
+        const response = await fetch(`http://127.0.0.1:8787/api/snapshot?columns=${viewColumns}&rows=${viewRows}`, { cache: "no-store" });
         if (!response.ok) throw new Error("world server unavailable");
         const snapshot = await response.json() as ServerSnapshot;
         const eventResponse = await fetch("http://127.0.0.1:8787/api/events", { cache: "no-store" });
@@ -95,11 +104,81 @@ export default function Home() {
           if (events.length) setLogs(events.slice(-40).map((event) => ({ day: Math.floor((event.tick - 1) / 24) + 1, text: event.text, tone: event.kind === "night" || event.kind === "spawn" || event.kind === "damage" ? "danger" : event.kind === "building" || event.kind === "mining" || event.kind === "inventory" ? "build" : "system" })));
         }
       } catch { if (!cancelled) setServerOnline(false); }
+      finally { if (!cancelled) setInitialSyncComplete(true); }
     };
     sync();
     const interval = window.setInterval(sync, 1000);
     return () => { cancelled = true; window.clearInterval(interval); };
+  }, [viewColumns, viewRows]);
+
+  useLayoutEffect(() => {
+    document.documentElement.classList.toggle("app-ready", hydrated && initialSyncComplete);
+  }, [hydrated, initialSyncComplete]);
+
+  useEffect(() => {
+    const updateViewRadius = () => {
+      const consoleWidth = document.querySelector(".world-console")?.clientWidth ?? window.innerWidth;
+      const targetTile = window.innerWidth > 850 ? 42 : 44;
+      const columns = Math.max(13, Math.min(31, Math.floor(consoleWidth / targetTile)));
+      const usableHeight = Math.max(420, window.innerHeight - (window.innerWidth > 850 ? 140 : 420));
+      const rows = Math.max(9, Math.min(25, Math.floor(usableHeight / targetTile)));
+      setViewColumns(columns); setViewRows(rows);
+    };
+    updateViewRadius(); window.addEventListener("resize", updateViewRadius);
+    return () => window.removeEventListener("resize", updateViewRadius);
   }, []);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty("--world-columns", String(world[0]?.length ?? DEFAULT_WORLD_SIZE));
+    document.documentElement.style.setProperty("--world-rows", String(world.length || DEFAULT_WORLD_SIZE));
+  }, [world]);
+
+  useEffect(() => {
+    const onPointerMove = (event: MouseEvent) => {
+      const tile = (event.target as HTMLElement).closest(".block-tile");
+      const coordinates = tile?.getAttribute("aria-label")?.match(/^(-?\d+),(-?\d+)/);
+      if (!coordinates) { setHoveredCoordinate(null); return; }
+      setHoveredCoordinate({ x: Number(coordinates[1]) + (cameraOriginRef.current?.x ?? 0), y: Number(coordinates[2]) + (cameraOriginRef.current?.y ?? 0) });
+    };
+    document.addEventListener("mousemove", onPointerMove);
+    return () => document.removeEventListener("mousemove", onPointerMove);
+  }, []);
+
+  useEffect(() => {
+    const blockServerStatusClick = (event: MouseEvent) => {
+      if ((event.target as HTMLElement).closest(".tool-toggle button:last-child")) { event.preventDefault(); event.stopPropagation(); }
+    };
+    document.addEventListener("click", blockServerStatusClick, true);
+    return () => document.removeEventListener("click", blockServerStatusClick, true);
+  }, []);
+
+  useEffect(() => {
+    const hint = document.querySelector(".world-hint");
+    if (!hint) return;
+    if (coordinatesVisible && hoveredCoordinate) { hint.classList.add("coordinate-mode"); hint.setAttribute("data-coordinate", ` · 光标坐标 ${hoveredCoordinate.x},${hoveredCoordinate.y}`); }
+    else { hint.classList.remove("coordinate-mode"); hint.removeAttribute("data-coordinate"); }
+  }, [coordinatesVisible, hoveredCoordinate]);
+
+  useEffect(() => {
+    const positionEventLog = () => {
+      const worldConsole = document.querySelector(".world-console");
+      const controls = document.querySelector(".controls-card");
+      const eventLog = document.querySelector(".world-console > .log-strip") as HTMLElement | null;
+      if (!worldConsole || !controls || !eventLog) return;
+      const controlsBottom = controls.getBoundingClientRect().bottom;
+      const consoleBottom = worldConsole.getBoundingClientRect().bottom;
+      eventLog.style.top = `${controlsBottom - worldConsole.getBoundingClientRect().top}px`;
+      eventLog.style.height = `${Math.max(140, consoleBottom - controlsBottom)}px`;
+    };
+    positionEventLog();
+    const observer = new ResizeObserver(positionEventLog);
+    const worldConsole = document.querySelector(".world-console");
+    const controls = document.querySelector(".controls-card");
+    if (worldConsole) observer.observe(worldConsole);
+    if (controls) observer.observe(controls);
+    window.addEventListener("resize", positionEventLog);
+    return () => { observer.disconnect(); window.removeEventListener("resize", positionEventLog); };
+  }, [world.length, logs.length]);
 
   const sendCommand = async (payload: Record<string, string | number>): Promise<boolean> => {
     if (!serverOnline) { log("世界服务尚未连接。请先启动 Rust world-server。", "danger"); return false; }
@@ -163,7 +242,7 @@ export default function Home() {
     if (!window.confirm("确定要放弃当前世界，从第一天重新开始吗？")) return;
     if (serverOnline && !(await sendCommand({ command: "reset" }))) return;
     window.localStorage.removeItem(SAVE_KEY);
-    const freshWorld = makeWorld(); worldRef.current = freshWorld; cameraOriginRef.current = { x: 0, y: 0 }; setWorld(freshWorld); setWorldOrigin({ x: 0, y: 0 }); setPlayer({ x: 9, y: 6 }); setHp(5); setInventory({ wood: 6, stone: 3, dirt: 12, torch: 4 }); setSelected("wood"); setAction("break"); setTick(6); setBuilt(0); setMonsters([]); setSounds([]); setLogs(initialLogs);
+    const freshWorld = makeWorld(); worldRef.current = freshWorld; cameraOriginRef.current = { x: 0, y: 0 }; setWorld(freshWorld); setWorldOrigin({ x: 0, y: 0 }); setPlayer({ x: 9, y: 6 }); setHp(5); setInventory({ wood: 6, stone: 3, dirt: 12, torch: 4 }); setSelected("wood"); setAction("break"); setTick(6); setBuilt(0); setMonsters([]); setSounds([]); setSheltered(false); setTorchLit(false); setLogs(initialLogs);
   };
   const canReach = (x: number, y: number) => Math.abs(x - player.x) <= 1 && Math.abs(y - player.y) <= 1 && !(x === player.x && y === player.y);
 
@@ -218,6 +297,7 @@ export default function Home() {
       if (key === "d" || event.key === "ArrowRight") { event.preventDefault(); move(1, 0); }
       if (key === "e") setAction("break");
       if (key === "q") setAction("place");
+      if (key === "c") setCoordinatesVisible((value) => !value);
       if (event.key === "?") setHelpOpen(true);
       if (event.key === "Escape") setHelpOpen(false);
     };
@@ -230,13 +310,13 @@ export default function Home() {
     scrollToTop();
   }, [helpOpen]);
 
-  const baseObjective = built >= 8 ? "你已经有了一处可以过夜的 shelter。" : night ? "夜晚来了：点亮火把，或继续冒险。" : `在夜晚前搭建避难所（还需要 ${Math.max(0, 8 - built)} 个方块）`;
+  const baseObjective = sheltered ? "你现在在封闭避难所内，可以安全观察夜晚。" : torchLit ? "火把照亮了周围，继续用墙体围出封闭避难所。" : night ? "夜晚来了：点亮火把，或继续搭建封闭避难所。" : `在夜晚前搭建封闭避难所（还需要 ${Math.max(0, 8 - built)} 个方块）`;
   const objective = sounds.length ? `${baseObjective} ${sounds.join(" ")}` : baseObjective;
   const nearby = useMemo(() => [world[player.y]?.[player.x - 1], world[player.y]?.[player.x + 1], world[player.y - 1]?.[player.x], world[player.y + 1]?.[player.x]].filter(Boolean).map((tile) => tile?.type).filter((type) => type !== "grass" && type !== "unknown"), [world, player.x, player.y]);
 
   return <main className="app-shell" onClickCapture={(event) => { const target = event.target as HTMLElement; const helpButton = target.closest(".help-button"); const miniHelp = target.closest(".mini-help"); if (miniHelp || helpButton) { scrollToTop(); replayTutorialPulse(); } }}>
     <header className="topbar"><div><p className="eyebrow">LIVING WORLD / BLOCKWORLD MVP</p><h1>苔原 · 第 {day} 天</h1><span className="subtitle">Rust 世界服务：{serverOnline ? "已连接，世界持续运行" : "未连接，请启动 world-server"}</span></div><div className="view-switch"><button className={`help-button ${helpOpen ? "active" : ""}`} aria-expanded={helpOpen} onClick={() => setHelpOpen((value) => !value)}>❔ 新手说明</button><button className={mode === "world" ? "active" : ""} onClick={() => setMode("world")}>生存视角</button><button className={mode === "history" ? "active" : ""} onClick={() => setMode("history")}>世界历史</button></div></header>
-    {helpOpen && <section className="tutorial" role="dialog" aria-label="新手说明"><div><p className="eyebrow">HOW TO PLAY</p><h2>三分钟了解这个世界</h2></div><button className="tutorial-close" onClick={() => setHelpOpen(false)}>关闭 ×</button><div className="tutorial-steps"><article><b>01</b><strong>先移动</strong><p>用 <kbd>WASD</kbd> 或方向键在方块世界里走动。你只能操作身边一格的方块。</p></article><article><b>02</b><strong>收集材料</strong><p>保持“挖掘”模式，点击相邻的树、石头或泥土。木材造木墙，石头造石墙，泥土适合临时填补。</p></article><article><b>03</b><strong>搭建避难所</strong><p>切到“放置”：先用木墙围出四边，再用泥土堵住缺口；有足够石头后，把入口和外墙换成石墙。封闭墙体能挡住怪物和视线。</p></article><article><b>❗</b><strong>用火把过夜</strong><p>把火把放在避难所内部、入口和道路旁。火把照亮周围并保护居民，但不是武器；夜里仍要留意墙外的脚步声。</p></article></div></section>}
+    {helpOpen && <section className="tutorial" role="dialog" aria-label="新手说明"><div><p className="eyebrow">HOW TO PLAY</p><h2>三分钟了解这个世界</h2></div><button className="tutorial-close" onClick={() => setHelpOpen(false)}>关闭 ×</button><div className="tutorial-steps"><article><b>01</b><strong>先移动</strong><p>用 <kbd>WASD</kbd> 或方向键在方块世界里走动。你只能操作身边一格的方块。</p></article><article><b>02</b><strong>收集材料</strong><p>按 <kbd>E</kbd> 进入挖掘，点击身边一格的树、石头或泥土收集材料。</p></article><article><b>03</b><strong>搭建避难所</strong><p>按 <kbd>Q</kbd> 进入放置，点击相邻草地或泥土。用木墙、石墙和泥土围出封闭区域，避开夜里的怪物。</p></article><article><b>❗</b><strong>用火把过夜</strong><p>把火把放在避难所内部、入口和道路旁。火把照亮周围并保护居民，但不是武器；夜里仍要留意墙外的脚步声。</p></article></div></section>}
     {mode === "world" ? <section className="game-layout"><aside className="game-sidebar"><div className="status-card"><div className="avatar-player">你</div><h2>流浪者</h2><p>{night ? "❗ 夜晚 · 危险正在靠近" : "☀ 白天 · 适合探索和建造"}</p><div className="hearts">{"♥".repeat(hp)}<i>{"♡".repeat(5 - hp)}</i></div></div><div className="goal-card"><p className="eyebrow">❗ 当前目标</p><strong>{objective}</strong><small>附近：{nearby.length ? nearby.join("、") : "安静的草地"}</small></div><div className="inventory-card"><p className="eyebrow">背包</p>{(Object.keys(blockInfo) as Block[]).map((block) => <button title={`选择${blockInfo[block].label}`} className={`inventory-item ${selected === block ? "selected" : ""}`} key={block} onClick={() => setSelected(block)}><b>{blockInfo[block].icon}</b><span>{blockInfo[block].label}</span><em>{inventory[block]}</em></button>)}</div><div className="controls-card"><p className="eyebrow">操作</p><span><kbd>WASD</kbd> / 方向键移动</span><span><kbd>E</kbd> 挖掘　<kbd>Q</kbd> 放置</span><span>点击相邻方块执行动作</span><button className="mini-help" onClick={() => setHelpOpen(true)}>❔ 再看一遍教学</button><button className="mini-reset" onClick={resetGame}>重新开始这个世界</button></div></aside><section className="world-console"><div className="world-toolbar"><div><span className={`sun-dot ${night ? "moon" : ""}`}></span>{night ? "夜晚" : "白天"} · {String(hour).padStart(2, "0")}:00</div><div className="tool-toggle"><button className={action === "break" ? "active" : ""} onClick={() => setAction("break")}>挖掘</button><button className={action === "place" ? "active" : ""} onClick={() => setAction("place")}>放置 {blockInfo[selected].icon}</button><button disabled={!serverOnline} onClick={() => setServerOnline(false)}>{serverOnline ? "服务端运行中" : "等待服务端"}</button></div></div>{notice && <div className="world-notice" role="status">⚠ {notice}</div>}<div className={`block-world ${night ? "night" : ""}`} aria-label="可以移动和编辑的方块世界">{world.map((row, y) => row.map((tile, x) => { const monster = monsters.some((item) => item.x === x && item.y === y); const isPlayer = player.x === x && player.y === y; return <button key={`${x}-${y}`} className={`block-tile ${tile.type} ${isPlayer ? "player" : ""} ${monster ? "monster" : ""}`} onClick={() => editTile(x, y)} aria-label={`${x},${y} ${tile.type}`}>{isPlayer ? "●" : monster ? "☠" : tileIcon[tile.type]}</button>; }))}</div><div className="world-hint">{serverOnline ? (action === "break" ? "靠近一个资源方块，点击它来挖掘" : `靠近空地，点击放置${blockInfo[selected].label}`) : "等待 Rust world-server 连接后才能操作"} · 当前位置 {player.x},{player.y}</div><div className="log-strip"><div className="log-strip-head"><span>世界事件 · {logs.length}</span><button onClick={() => setShowAllLogs((value) => !value)}>{showAllLogs ? "收起" : "查看更多"}</button></div><div className={showAllLogs ? "log-list expanded" : "log-list"}>{logs.slice(showAllLogs ? -40 : -5).reverse().map((entry, index) => <p className={entry.tone ?? ""} key={`${entry.day}-${index}`}>第{entry.day}天　{entry.text}</p>)}</div></div></section></section> : <section className="history-page"><div className="history-head"><div><p className="eyebrow">WORLD EVENT STREAM</p><h2>这个世界是怎样被改变的</h2></div><span>所有行动都会留下记录</span></div><div className="history-grid"><div className="history-timeline">{logs.map((entry, index) => <article className={entry.tone ?? ""} key={`${entry.day}-${index}`}><span>第 {entry.day} 天</span><p>{entry.text}</p></article>)}</div><aside className="future-card"><p className="eyebrow">未来接口</p><h3>居民与自动化</h3><p>下一层可以让居民读取这条事件流：他们会看到你砍过的树、建过的墙，也会对夜晚留下自己的记忆。</p><p>再往后，玩家可以把重复动作交给可编程代理，逐渐走向 Screeps 的基地与自动化。</p><button onClick={() => setMode("world")}>回到世界</button></aside></div></section>}
   </main>;
 }
