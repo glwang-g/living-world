@@ -1,7 +1,7 @@
 //! The authoritative, deterministic world rules. The world has no fixed edge:
 //! terrain is generated from coordinates and only player changes are stored.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use world_protocol::{Block, Direction, Inventory, Observation, PlaceBlock, PlayerCommand, Pos, WorldEvent, WorldSnapshot};
 
 const MAX_HP: u8 = 5;
@@ -38,7 +38,7 @@ impl World {
             if night && self.monsters.is_empty() { let pos = Pos::new(self.player.x + 3, self.player.y); self.monsters.push(pos); self.events.push(WorldEvent::MonsterSpawned { pos }); }
             if !night { self.monsters.clear(); }
         }
-        if self.night && self.monsters.iter().any(|monster| monster.distance(self.player) == 1) {
+        if self.night && !self.is_sheltered() && !self.torch_lights(self.player) && self.monsters.iter().any(|monster| monster.distance(self.player) == 1) {
             self.hp = self.hp.saturating_sub(1);
             self.events.push(WorldEvent::PlayerHurt { hp: self.hp });
         }
@@ -62,16 +62,20 @@ impl World {
 
     pub fn observation(&self, radius: i32) -> Observation {
         let radius = radius.max(1);
-        let origin = Pos::new(self.player.x - radius, self.player.y - radius);
-        let width = (radius * 2 + 1) as u32;
-        let visibility_radius = if self.night { 3 } else { radius };
-        let mut nearby = Vec::with_capacity((width * width) as usize);
-        for y in origin.y..=self.player.y + radius { for x in origin.x..=self.player.x + radius { let pos = Pos::new(x, y); let visible = pos.distance(self.player) <= visibility_radius || self.torch_lights(pos); nearby.push((pos, if visible && self.line_of_sight(pos) { self.block_at(pos) } else { Block::Unknown })); } }
+        self.observation_window((radius * 2 + 1) as u32, (radius * 2 + 1) as u32)
+    }
+
+    pub fn observation_window(&self, width: u32, height: u32) -> Observation {
+        let width = width.max(3); let height = height.max(3);
+        let origin = Pos::new(self.player.x - (width as i32 / 2), self.player.y - (height as i32 / 2));
+        let visibility_radius = if self.night { 3 } else { (width.max(height) as i32 / 2).max(1) };
+        let mut nearby = Vec::with_capacity((width * height) as usize);
+        for y in origin.y..origin.y + height as i32 { for x in origin.x..origin.x + width as i32 { let pos = Pos::new(x, y); let visible = pos.distance(self.player) <= visibility_radius || self.torch_lights(pos); nearby.push((pos, if visible && self.line_of_sight(pos) { self.block_at(pos) } else { Block::Unknown })); } }
         let monsters = self.monsters.iter().copied().filter(|pos| self.visible(*pos, visibility_radius)).collect::<Vec<_>>();
         let mut sounds = Vec::new();
-        if self.monsters.iter().any(|pos| pos.distance(self.player) <= radius + 3 && !self.visible(*pos, visibility_radius)) { sounds.push("你听见远处有脚步声。".into()); }
+        if self.monsters.iter().any(|pos| pos.distance(self.player) <= visibility_radius + 3 && !self.visible(*pos, visibility_radius)) { sounds.push("你听见远处有脚步声。".into()); }
         if self.night && !self.torch_lights(self.player) { sounds.push("黑暗正在靠近。".into()); }
-        Observation { tick: self.tick, origin, width, height: width, self_pos: self.player, hp: self.hp, night: self.night, inventory: self.inventory.clone(), nearby, monsters, sounds }
+        Observation { tick: self.tick, origin, width, height, self_pos: self.player, hp: self.hp, night: self.night, inventory: self.inventory.clone(), nearby, monsters, sounds, sheltered: self.is_sheltered(), torch_lit: self.torch_lights(self.player) }
     }
 
     pub fn drain_events(&mut self) -> Vec<WorldEvent> { std::mem::take(&mut self.events) }
@@ -93,6 +97,26 @@ impl World {
     fn set_block(&mut self, pos: Pos, block: Block) { self.modified.insert(pos, block); }
     fn visible(&self, pos: Pos, radius: i32) -> bool { pos.distance(self.player) <= radius && self.line_of_sight(pos) }
     fn torch_lights(&self, pos: Pos) -> bool { self.modified.iter().any(|(torch, block)| *block == Block::Torch && torch.distance(pos) <= 4 && self.line_of_sight_from(*torch, pos)) }
+    fn is_sheltered(&self) -> bool {
+        const SEARCH_RADIUS: i32 = 6;
+        let min_x = self.player.x - SEARCH_RADIUS;
+        let max_x = self.player.x + SEARCH_RADIUS;
+        let min_y = self.player.y - SEARCH_RADIUS;
+        let max_y = self.player.y + SEARCH_RADIUS;
+        let mut queue = VecDeque::from([self.player]);
+        let mut visited = HashMap::from([(self.player, true)]);
+        while let Some(pos) = queue.pop_front() {
+            if pos.x == min_x || pos.x == max_x || pos.y == min_y || pos.y == max_y { return false; }
+            for next in [Pos::new(pos.x - 1, pos.y), Pos::new(pos.x + 1, pos.y), Pos::new(pos.x, pos.y - 1), Pos::new(pos.x, pos.y + 1)] {
+                if next.x < min_x || next.x > max_x || next.y < min_y || next.y > max_y || visited.contains_key(&next) { continue; }
+                if self.block_at(next) != Block::Wall {
+                    visited.insert(next, true);
+                    queue.push_back(next);
+                }
+            }
+        }
+        true
+    }
     fn line_of_sight(&self, pos: Pos) -> bool { self.line_of_sight_from(self.player, pos) }
     fn line_of_sight_from(&self, from: Pos, to: Pos) -> bool {
         let steps = (to.x - from.x).abs().max((to.y - from.y).abs());
@@ -115,7 +139,7 @@ impl World {
     }
     fn place_at(&mut self, target: Pos, item: PlaceBlock) {
         if self.player.distance(target) > 1 { self.events.push(WorldEvent::Message("你够不到那里。".into())); return; }
-        if self.block_at(target) != Block::Grass { self.events.push(WorldEvent::Message("这里只能在草地上放置。".into())); return; }
+        if !matches!(self.block_at(target), Block::Grass | Block::Dirt) { self.events.push(WorldEvent::Message("这里只能在草地或泥土上放置。".into())); return; }
         if !self.remove_item(item) { self.events.push(WorldEvent::Message("你的材料不够。".into())); return; }
         let block = match item { PlaceBlock::WoodWall => Block::Wall, PlaceBlock::Stone => Block::Stone, PlaceBlock::Dirt => Block::Dirt, PlaceBlock::Torch => Block::Torch };
         self.set_block(target, block); self.events.push(WorldEvent::BlockPlaced { pos: target, block });
@@ -134,4 +158,7 @@ mod tests {
     #[test] fn only_grass_and_torches_are_walkable() { let mut world = World::new(20, 12); for (offset, block) in [(1, Block::Tree), (2, Block::Stone), (3, Block::Dirt), (4, Block::Torch), (5, Block::Wall), (6, Block::Water)] { world.set_block(Pos::new(9 + offset, 6), block); } world.apply(PlayerCommand::Move(Direction::Right)); assert_eq!(world.snapshot().player, Pos::new(9, 6)); world.set_block(Pos::new(10, 6), Block::Torch); world.apply(PlayerCommand::Move(Direction::Right)); assert_eq!(world.snapshot().player, Pos::new(10, 6)); }
     #[test] fn night_reduces_visibility() { let mut world = World::new(20, 12); let daylight = world.observation(6); assert_ne!(daylight.nearby.iter().find(|(pos, _)| *pos == Pos::new(14, 6)).unwrap().1, Block::Unknown); for _ in 0..11 { world.tick(); } let night = world.observation(6); assert_eq!(night.nearby.iter().find(|(pos, _)| *pos == Pos::new(14, 6)).unwrap().1, Block::Unknown); }
     #[test] fn torch_reveals_darkness() { let mut world = World::new(20, 12); world.apply(PlayerCommand::PlaceAt(Pos::new(10, 6), PlaceBlock::Torch)); for _ in 0..11 { world.tick(); } let observation = world.observation(6); assert_eq!(observation.nearby.iter().find(|(pos, _)| *pos == Pos::new(13, 6)).unwrap().1, Block::Grass); }
+    #[test] fn dirt_can_hold_a_new_block() { let mut world = World::new(20, 12); world.set_block(Pos::new(10, 6), Block::Dirt); world.apply(PlayerCommand::PlaceAt(Pos::new(10, 6), PlaceBlock::Torch)); assert_eq!(world.snapshot().modified.iter().find(|(pos, _)| *pos == Pos::new(10, 6)).unwrap().1, Block::Torch); }
+    #[test] fn enclosed_walls_protect_from_monsters() { let mut world = World::new(20, 12); for pos in [Pos::new(8, 5), Pos::new(9, 5), Pos::new(10, 5), Pos::new(8, 6), Pos::new(10, 6), Pos::new(8, 7), Pos::new(9, 7), Pos::new(10, 7)] { world.set_block(pos, Block::Wall); } world.monsters.push(Pos::new(7, 6)); world.tick = 16; world.night = true; world.tick(); assert_eq!(world.snapshot().hp, MAX_HP); }
+    #[test] fn torch_repels_monsters_without_a_shelter() { let mut world = World::new(20, 12); world.set_block(Pos::new(9, 6), Block::Torch); world.monsters.push(Pos::new(10, 6)); world.tick = 16; world.night = true; world.tick(); assert_eq!(world.snapshot().hp, MAX_HP); }
 }
