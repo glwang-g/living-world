@@ -87,4 +87,6 @@ pub struct Observation {
     pub nearby: Vec<(Pos, Block)>,
     pub monsters: Vec<Pos>,
     pub sounds: Vec<String>,
+    pub sheltered: bool,
+    pub torch_lit: bool,
 }
