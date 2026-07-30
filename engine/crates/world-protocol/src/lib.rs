@@ -22,7 +22,7 @@ impl Direction {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Block { Grass, Tree, Stone, Water, Dirt, Wall, Torch, Unknown }
+pub enum Block { Grass, Tree, Stone, StoneWall, Water, Dirt, PlacedDirt, Wall, Torch, Unknown }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PlaceBlock { WoodWall, Stone, Dirt, Torch }
@@ -42,6 +42,8 @@ pub enum WorldEvent {
     NightStarted,
     Dawn,
     MonsterSpawned { pos: Pos },
+    MonsterMoved { from: Pos, to: Pos },
+    MonsterRepelled { pos: Pos },
     PlayerHurt { hp: u8 },
     Message(String),
 }

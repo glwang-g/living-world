@@ -82,13 +82,31 @@ button { font:inherit; cursor:pointer; }
 .block-world > .block-tile.player::before { content:""; inset:1%; border:0; border-radius:0; background:url('/player-explorer.png') center/contain no-repeat; box-shadow:none; }
 .block-world > .block-tile.player::after { content:none !important; }
 .block-tile.unknown { background:linear-gradient(135deg,#879889,#718276); color:transparent; opacity:.82; }
+.block-tile.remembered { opacity:.46; filter:saturate(.62) brightness(.92); }
 .block-tile.wall { background:repeating-linear-gradient(0deg,#8e664b 0 7px,#a17b5a 7px 10px); color:#5b3e2e; }
+.block-tile.stone-wall { background:repeating-linear-gradient(0deg,#687a78 0 7px,#9aa8a2 7px 10px); color:#d7e0d8; box-shadow:inset 0 0 0 1px #51625f; }
 .block-tile.stone { background:repeating-linear-gradient(135deg,#8f9f99 0 6px,#aab8b0 6px 9px); color:#536c68; }
 .block-tile.dirt { background:radial-gradient(circle at 30% 35%,#d0b887 0 1px,transparent 2px),radial-gradient(circle at 70% 70%,#90724f 0 1px,transparent 2px),#bca579; color:#7e623e; }
 .block-world > .block-tile.torch { position:relative; color:transparent; font-size:0 !important; }
 .block-world > .block-tile.torch::before { content:"🔥" !important; position:absolute; inset:12% 0 31%; display:grid; place-items:center; font-size:clamp(19px,3.4vw,30px); line-height:1; }
 .block-world > .block-tile.torch::after { content:"" !important; position:absolute; left:47%; right:47%; top:57%; bottom:13%; border-radius:3px; background:#70452c; box-shadow:1px 0 #9b6841; }
 .block-world > .block-tile.dirt { color:transparent; background-image:url('/dirt-mound.png'); background-size:78% auto; background-position:center; background-repeat:no-repeat; }
+.block-world > .block-tile.player::after { content:none !important; }
+.block-world > .block-tile.player::before { background-image:url('/player-explorer-directions.png'); background-size:200% 200%; background-repeat:no-repeat; }
+.block-world > .block-tile.player.facing-down::before { background-position:0 0; }
+.block-world > .block-tile.player.facing-left::before { background-position:100% 0; }
+.block-world > .block-tile.player.facing-right::before { background-position:0 100%; }
+.block-world > .block-tile.player.facing-up::before { background-position:100% 100%; }
+.block-world > .block-tile.player.facing-up::before { animation:arrive-from-down .28s ease-out; }
+.block-world > .block-tile.player.facing-down::before { animation:arrive-from-up .28s ease-out; }
+.block-world > .block-tile.player.facing-left::before { animation:arrive-from-right .28s ease-out; }
+.block-world > .block-tile.player.facing-right::before { animation:arrive-from-left .28s ease-out; }
+.status-card .avatar-player { position:relative; background-image:url('/player-explorer-directions.png'); background-size:200% 200%; background-repeat:no-repeat; }
+.status-card .avatar-player.facing-down { background-position:0 0; }
+.status-card .avatar-player.facing-left { background-position:100% 0; }
+.status-card .avatar-player.facing-right { background-position:0 100%; }
+.status-card .avatar-player.facing-up { background-position:100% 100%; }
+.status-card .avatar-player::after { content:none; }
 .inventory-card .inventory-item:nth-of-type(3) b { display:block; width:26px; height:22px; overflow:hidden; background:url('/dirt-mound.png') center/contain no-repeat; font-size:0; }
 .world-console { position:relative; }
 .world-notice { position:absolute; z-index:5; top:50%; left:50%; max-width:min(78%,390px); padding:15px 22px; border:1px solid #d99b4c; border-radius:13px; background:#fff8e8ee; color:#70491e; font-size:13px; font-weight:700; line-height:1.4; text-align:center; box-shadow:0 10px 28px #70491e38,0 0 0 4px #fff8e844; transform:translate(-50%,-50%); animation:notice-in .16s ease-out; pointer-events:none; backdrop-filter:blur(3px); }
@@ -109,3 +127,98 @@ button { font:inherit; cursor:pointer; }
 .controls-card .mini-reset::before { content:"☣"; margin-right:5px; font-size:26px; line-height:.7; vertical-align:-3px; }
 .controls-card .mini-reset:hover { border-color:#7d4c00; background:#ffca3a; transform:translateY(-1px); }
 @keyframes notice-in { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
+
+/* The action mode is a real control, so its shortcut and active state stay visible together. */
+.tool-toggle button:not(:last-child) { display:inline-flex; align-items:center; gap:5px; }
+.tool-toggle button:not(:last-child)::before { display:inline-grid; place-items:center; min-width:17px; height:17px; border:1px solid currentColor; border-radius:4px; font-size:10px; font-weight:800; line-height:1; }
+.tool-toggle button:first-child::before { content:"E"; }
+.tool-toggle button:nth-child(2)::before { content:"F"; }
+.world-hint::before { content:none; }
+
+/* Treat mining/placing as one two-state control, with a sliding active track. */
+.tool-toggle { gap:0; padding:3px; border:1px solid var(--line); border-radius:9px; background:#eef1eb; }
+.tool-toggle::before { content:""; position:absolute; z-index:0; top:3px; left:3px; width:76px; height:30px; border-radius:6px; background:var(--paper); box-shadow:0 1px 5px #1d292512; transition:left .16s ease; }
+.tool-toggle:has(button:nth-child(2).active)::before { left:79px; }
+.tool-toggle button:not(:last-child) { position:relative; z-index:1; width:76px; justify-content:center; border-color:transparent; background:transparent; transition:color .16s ease; }
+.tool-toggle button:not(:last-child).active,.tool-toggle button:not(:last-child):hover { border-color:transparent; background:transparent; color:var(--pine); }
+.tool-toggle button:last-child { margin-left:6px; }
+.tool-toggle button:last-child::before { z-index:2; }
+
+@media(max-width:560px){
+  .tool-toggle::before { width:calc((100% - 38px) / 2); }
+  .tool-toggle:has(button:nth-child(2).active)::before { left:calc((100% - 38px) / 2 + 3px); }
+  .tool-toggle button:not(:last-child) { width:auto; flex:1; }
+}
+
+/* Keep the server indicator outside the mode switch visually. */
+.tool-toggle { padding:0; border:0; border-radius:0; background:transparent; }
+.tool-toggle::before { top:0; left:0; width:158px; height:30px; border:1px solid var(--line); border-radius:8px; background:#eef1eb; box-shadow:none; }
+.tool-toggle::after { content:""; position:absolute; z-index:0; top:0; left:0; width:158px; height:30px; border-radius:8px; box-shadow:inset 0 0 0 1px var(--line); pointer-events:none; }
+.tool-toggle:has(button:nth-child(2).active)::before { left:79px; }
+.tool-toggle button:not(:last-child) { width:79px; height:30px; border-radius:8px; }
+.tool-toggle button:last-child { margin-left:12px; }
+
+@media(max-width:560px){
+  .tool-toggle::before,.tool-toggle::after { width:calc(100% - 38px); }
+  .tool-toggle:has(button:nth-child(2).active)::before { left:calc((100% - 38px) / 2); }
+}
+
+/* iPhone-style switch: a soft track with one white thumb that slides between modes. */
+.tool-toggle::after { top:0; left:0; width:158px; height:30px; border:0; border-radius:999px; background:#d9ddd8; box-shadow:inset 0 1px 2px #20302820; }
+.tool-toggle::before { top:2px; left:2px; width:76px; height:26px; border:0; border-radius:999px; background:#fffdf8; box-shadow:0 2px 5px #20302830,0 0 0 1px #ffffffaa; transition:left .2s cubic-bezier(.2,.8,.2,1); }
+.tool-toggle:has(button:nth-child(2).active)::before { left:80px; }
+.tool-toggle button:not(:last-child) { flex:0 0 79px; height:30px; border:0; border-radius:999px; color:#68736b; font-size:11px; }
+.tool-toggle button:not(:last-child).active { color:var(--pine); font-weight:800; }
+.tool-toggle button:not(:last-child)::before { min-width:0; width:auto; height:auto; border:0; border-radius:0; font-size:10px; }
+.tool-toggle button:last-child { margin-left:12px; }
+
+@media(max-width:560px){
+  .tool-toggle::after { width:calc(100% - 38px); }
+  .tool-toggle::before { width:calc((100% - 38px) / 2 - 3px); }
+  .tool-toggle:has(button:nth-child(2).active)::before { left:calc((100% - 38px) / 2 + 3px); }
+  .tool-toggle button:not(:last-child) { flex:1 1 0; }
+}
+
+/* Fallback-visible thumb: the selected mode itself is the white raised thumb. */
+.tool-toggle { padding:2px; border-radius:999px; background:#d9ddd8; }
+.tool-toggle button:not(:last-child) { transition:background .2s ease,box-shadow .2s ease,color .2s ease; }
+.tool-toggle button:not(:last-child).active { background:#fffdf8 !important; box-shadow:0 2px 5px #20302830,0 0 0 1px #ffffffaa; }
+.tool-toggle button:last-child { margin-left:10px; }
+
+@keyframes arrive-from-left { from { transform:translateX(-80%); opacity:.35; } to { transform:translateX(0); opacity:1; } }
+@keyframes arrive-from-right { from { transform:translateX(80%); opacity:.35; } to { transform:translateX(0); opacity:1; } }
+@keyframes arrive-from-up { from { transform:translateY(-80%); opacity:.35; } to { transform:translateY(0); opacity:1; } }
+@keyframes arrive-from-down { from { transform:translateY(80%); opacity:.35; } to { transform:translateY(0); opacity:1; } }
+
+/* Directional explorer sprite: front, left, right, and back occupy the four quadrants. */
+.block-world > .block-tile.player::before { background-image:url('/player-explorer-directions.png') !important; background-size:200% 200% !important; background-repeat:no-repeat !important; }
+.block-world > .block-tile.player.facing-down::before { background-position:0 0 !important; }
+.block-world > .block-tile.player.facing-left::before { background-position:100% 0 !important; }
+.block-world > .block-tile.player.facing-right::before { background-position:0 100% !important; }
+.block-world > .block-tile.player.facing-up::before { background-position:100% 100% !important; }
+.status-card .avatar-player { background-image:url('/player-explorer-directions.png') !important; background-size:200% 200% !important; background-repeat:no-repeat !important; }
+.status-card .avatar-player.facing-down { background-position:0 0 !important; }
+.status-card .avatar-player.facing-left { background-position:100% 0 !important; }
+.status-card .avatar-player.facing-right { background-position:0 100% !important; }
+.status-card .avatar-player.facing-up { background-position:100% 100% !important; }
+.block-world > .block-tile.stone-wall { position:relative; background:repeating-linear-gradient(0deg,#682f29 0 2px,transparent 2px 12px),#b95745 !important; color:#ffe4d8 !important; text-shadow:0 1px 1px #5a2823; box-shadow:inset 0 0 0 2px #6a3029, inset 0 2px 0 #d4765e, inset 0 -2px 0 #7c342c; }
+.block-world > .block-tile.stone-wall::before { content:""; position:absolute; inset:0; background:repeating-linear-gradient(90deg,#74352d 0 2px,transparent 2px 19px); background-size:38px 24px; opacity:.9; }
+.block-world > .block-tile.stone-wall::after { content:"" !important; position:absolute; inset:0; background:repeating-linear-gradient(90deg,transparent 0 19px,#74352d 19px 21px,transparent 21px 38px); background-position:19px 12px; opacity:.9; }
+.block-world > .block-tile.wall { position:relative; background:repeating-linear-gradient(0deg,#70432d 0 2px,transparent 2px 12px),#b8784d !important; color:#ffe0b2 !important; box-shadow:inset 0 0 0 2px #6b402c, inset 0 2px 0 #d79a61, inset 0 -2px 0 #74452f; }
+.block-world > .block-tile.wall::before { content:""; position:absolute; inset:0; background:repeating-linear-gradient(90deg,transparent 0 25px,#805035 25px 27px,transparent 27px 52px); opacity:.65; }
+.block-world > .block-tile.placed-dirt { position:relative; background:linear-gradient(135deg,#785338 0 8%,transparent 8% 92%,#6a452f 92%),repeating-linear-gradient(0deg,#704a31 0 2px,transparent 2px 13px),#9b7048 !important; color:#ead0a1 !important; box-shadow:inset 0 0 0 2px #68442e, inset 0 2px 0 #c08b58; }
+.block-world > .block-tile.placed-dirt::before { content:""; position:absolute; inset:4px; border:1px solid #c18b57aa; opacity:.75; }
+.block-world { position:relative; }
+.player-actor { position:absolute; z-index:4; pointer-events:none; transform:translate(-50%,-50%); background-image:url('/player-explorer-directions.png'); background-size:200% 200%; background-repeat:no-repeat; transition:left .38s cubic-bezier(.2,.8,.2,1),top .38s cubic-bezier(.2,.8,.2,1); }
+.player-actor.facing-down { background-position:0 0; }
+.player-actor.facing-left { background-position:100% 0; }
+.player-actor.facing-right { background-position:0 100%; }
+.player-actor.facing-up { background-position:100% 100%; }
+.player-actor.walking { animation:player-step .39s ease-in-out infinite; }
+@keyframes player-step {
+  0%,100% { transform:translate(-50%,-50%) translateY(0) rotate(0deg); }
+  35% { transform:translate(-50%,-52%) rotate(-1.5deg); }
+  70% { transform:translate(-50%,-49%) rotate(1.5deg); }
+}
+
+.block-tile.water { background:repeating-linear-gradient(165deg,transparent 0 7px,#ffffff2e 7px 9px,transparent 9px 15px),#86bdc4; }
