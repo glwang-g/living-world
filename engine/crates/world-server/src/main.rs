@@ -12,6 +12,8 @@ use world_protocol::{Block, Direction, EventRecord, Inventory, Observation, Plac
 use world_runner::WorldRunner;
 
 const ADDRESS: &str = "127.0.0.1:8787";
+/// Keep one full 24-hour world day equal to Minecraft's 20 real minutes.
+const WORLD_HOUR_DURATION: Duration = Duration::from_secs(50);
 
 #[derive(Clone)]
 struct Persistence { directory: PathBuf, snapshot: PathBuf, events: PathBuf }
@@ -50,7 +52,7 @@ fn main() -> std::io::Result<()> {
     let runner = Arc::new(Mutex::new(WorldRunner::from_world(world)));
     let ticking = Arc::clone(&runner); let ticking_persistence = persistence.clone();
     thread::spawn(move || loop {
-        thread::sleep(Duration::from_secs(1));
+        thread::sleep(WORLD_HOUR_DURATION);
         let mut runner = ticking.lock().expect("world runner lock");
         let (_, events) = runner.step();
         let snapshot = runner.world.snapshot();
