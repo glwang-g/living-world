@@ -34,6 +34,9 @@ The browser in another terminal is then started with `npm run dev` and reads
 `http://127.0.0.1:8787/api/snapshot`. It sends player actions to
 `/api/command`; it does not own the authoritative tick.
 
+World time follows the early-Minecraft cadence: one world hour advances every
+50 real seconds, so one 24-hour world day takes 20 real minutes.
+
 ## macOS background service
 
 To start the world automatically after login:

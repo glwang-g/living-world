@@ -81,7 +81,8 @@ npm run dev
 ```
 
 服务端监听 `127.0.0.1:8787`，浏览器通过 `/api/snapshot` 读取状态、通过
-`/api/command` 发送操作。浏览器关闭后，服务端仍按秒推进世界。
+`/api/command` 发送操作。浏览器关闭后，服务端仍持续推进世界：一个世界小时
+对应现实 50 秒，完整一天对应现实 20 分钟。
 
 服务端数据位于 `engine/data/`：`world.snapshot` 是可恢复的当前快照，
 `world.events.log` 是追加式事件记录。macOS 可以用
