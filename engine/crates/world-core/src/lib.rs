@@ -5,14 +5,17 @@ use std::collections::{HashMap, VecDeque};
 use world_protocol::{Block, Direction, Inventory, Observation, PlaceBlock, PlayerCommand, Pos, WorldEvent, WorldSnapshot};
 
 const MAX_HP: u8 = 5;
+const STARTING_LIVES: u8 = 3;
 const INITIAL_WIDTH: i32 = 20;
 const INITIAL_HEIGHT: i32 = 12;
+const SPAWN_POINT: Pos = Pos::new(9, 6);
 
 pub struct World {
     tick: u64,
     modified: HashMap<Pos, Block>,
     player: Pos,
     hp: u8,
+    lives: u8,
     inventory: Inventory,
     monsters: Vec<Pos>,
     night: bool,
@@ -21,11 +24,12 @@ pub struct World {
 
 impl World {
     pub fn new(_width: u32, _height: u32) -> Self {
-        Self { tick: 6, modified: HashMap::new(), player: Pos::new(9, 6), hp: MAX_HP, inventory: Inventory { wood: 6, stone: 3, dirt: 12, torch: 4 }, monsters: Vec::new(), night: false, events: Vec::new() }
+        Self { tick: 6, modified: HashMap::new(), player: SPAWN_POINT, hp: MAX_HP, lives: STARTING_LIVES, inventory: Inventory { wood: 6, stone: 3, dirt: 12, torch: 4 }, monsters: Vec::new(), night: false, events: Vec::new() }
     }
 
     pub fn from_snapshot(snapshot: WorldSnapshot) -> Self {
-        Self { tick: snapshot.tick, modified: snapshot.modified.into_iter().collect(), player: snapshot.player, hp: snapshot.hp, inventory: snapshot.inventory, monsters: snapshot.monsters, night: snapshot.night, events: Vec::new() }
+        let hp = if snapshot.hp == 0 && snapshot.lives > 0 { MAX_HP } else { snapshot.hp };
+        Self { tick: snapshot.tick, modified: snapshot.modified.into_iter().collect(), player: snapshot.player, hp, lives: snapshot.lives, inventory: snapshot.inventory, monsters: snapshot.monsters, night: snapshot.night, events: Vec::new() }
     }
 
     pub fn tick(&mut self) {
@@ -38,10 +42,17 @@ impl World {
             if night && self.monsters.is_empty() { let pos = Pos::new(self.player.x + 3, self.player.y); self.monsters.push(pos); self.events.push(WorldEvent::MonsterSpawned { pos }); }
             if !night { self.monsters.clear(); }
         }
+        self.danger_tick();
+    }
+
+    /// Advances night-only agents without advancing the world clock. This keeps
+    /// creature behaviour responsive while a world hour remains readable.
+    pub fn danger_tick(&mut self) {
         if self.night { self.monster_turn(); }
     }
 
     pub fn apply(&mut self, command: PlayerCommand) {
+        if self.lives == 0 && !matches!(command, PlayerCommand::Reset) { self.events.push(WorldEvent::Message("你已经耗尽生命，请重新开始这个世界。".into())); return; }
         match command {
             PlayerCommand::Move(direction) => self.move_player(direction),
             PlayerCommand::BreakAt(pos) => self.break_at(pos),
@@ -54,7 +65,7 @@ impl World {
     pub fn snapshot(&self) -> WorldSnapshot {
         let mut modified = self.modified.iter().map(|(pos, block)| (*pos, *block)).collect::<Vec<_>>();
         modified.sort_by_key(|(pos, _)| (pos.y, pos.x));
-        WorldSnapshot { tick: self.tick, player: self.player, hp: self.hp, inventory: self.inventory.clone(), monsters: self.monsters.clone(), night: self.night, modified }
+        WorldSnapshot { tick: self.tick, player: self.player, hp: self.hp, lives: self.lives, inventory: self.inventory.clone(), monsters: self.monsters.clone(), night: self.night, modified }
     }
 
     pub fn observation(&self, radius: i32) -> Observation {
@@ -72,7 +83,7 @@ impl World {
         let mut sounds = Vec::new();
         if self.monsters.iter().any(|pos| pos.distance(self.player) <= visibility_radius + 3 && !self.visible(*pos, visibility_radius)) { sounds.push("你听见远处有脚步声。".into()); }
         if self.night && !self.torch_lights(self.player) { sounds.push("黑暗正在靠近。".into()); }
-        Observation { tick: self.tick, origin, width, height, self_pos: self.player, hp: self.hp, night: self.night, inventory: self.inventory.clone(), nearby, monsters, sounds, sheltered: self.is_sheltered(), torch_lit: self.torch_lights(self.player) }
+        Observation { tick: self.tick, origin, width, height, self_pos: self.player, hp: self.hp, lives: self.lives, night: self.night, inventory: self.inventory.clone(), nearby, monsters, sounds, sheltered: self.is_sheltered(), torch_lit: self.torch_lights(self.player) }
     }
 
     pub fn drain_events(&mut self) -> Vec<WorldEvent> { std::mem::take(&mut self.events) }
@@ -123,26 +134,41 @@ impl World {
         true
     }
     fn player_has_torch(&self) -> bool { self.torch_lights(self.player) }
-    fn monster_can_see_player(&self, monster: Pos) -> bool { monster.distance(self.player) <= 8 && self.line_of_sight_from(monster, self.player) }
+    fn monster_can_track_player(&self, monster: Pos) -> bool { monster.distance(self.player) <= 8 }
     fn monster_step(&self, monster: Pos, fleeing: bool) -> Option<Pos> {
         let options = [Pos::new(monster.x - 1, monster.y), Pos::new(monster.x + 1, monster.y), Pos::new(monster.x, monster.y - 1), Pos::new(monster.x, monster.y + 1)]
             .into_iter().filter(|pos| Self::walkable(self.block_at(*pos)) && !self.monsters.iter().any(|other| *other == *pos));
-        options.min_by_key(|pos| { let distance = pos.distance(self.player); if fleeing { -distance } else { distance } })
+        if fleeing { return options.min_by_key(|pos| -pos.distance(self.player)); }
+
+        let goals = [Pos::new(self.player.x - 1, self.player.y), Pos::new(self.player.x + 1, self.player.y), Pos::new(self.player.x, self.player.y - 1), Pos::new(self.player.x, self.player.y + 1)];
+        let mut queue = VecDeque::from([monster]);
+        let mut came_from = HashMap::from([(monster, None)]);
+        let mut destination = None;
+        while let Some(current) = queue.pop_front() {
+            if goals.contains(&current) { destination = Some(current); break; }
+            for next in [Pos::new(current.x - 1, current.y), Pos::new(current.x + 1, current.y), Pos::new(current.x, current.y - 1), Pos::new(current.x, current.y + 1)] {
+                if next.distance(self.player) > 12 || came_from.contains_key(&next) || !Self::walkable(self.block_at(next)) || (next != monster && self.monsters.iter().any(|other| *other == next)) { continue; }
+                came_from.insert(next, Some(current));
+                queue.push_back(next);
+            }
+        }
+        let mut step = destination?;
+        while let Some(Some(previous)) = came_from.get(&step) { if *previous == monster { return Some(step); } step = *previous; }
+        None
     }
     fn monster_turn(&mut self) {
         let current = self.monsters.clone();
         for (index, monster) in current.into_iter().enumerate() {
-            if !self.monster_can_see_player(monster) { continue; }
+            if !self.monster_can_track_player(monster) { continue; }
             if monster.distance(self.player) == 1 {
                 if self.player_has_torch() { self.events.push(WorldEvent::MonsterRepelled { pos: monster }); continue; }
-                self.hp = self.hp.saturating_sub(1);
-                self.events.push(WorldEvent::PlayerHurt { hp: self.hp });
+                self.hurt_player();
                 continue;
             }
             let fleeing = self.player_has_torch();
             let Some(next) = self.monster_step(monster, fleeing) else { continue };
             self.monsters[index] = next;
-            self.events.push(if fleeing { WorldEvent::MonsterRepelled { pos: next } } else { WorldEvent::MonsterMoved { from: monster, to: next } });
+            self.events.push(if fleeing { WorldEvent::MonsterRepelled { pos: next } } else if self.line_of_sight_from(monster, self.player) { WorldEvent::MonsterMoved { from: monster, to: next } } else { WorldEvent::MonsterRerouted { from: monster, to: next } });
         }
     }
     fn adjacent(&self, direction: Direction) -> Pos { let (x, y) = direction.offset(); Pos::new(self.player.x + x, self.player.y + y) }
@@ -150,19 +176,32 @@ impl World {
         let next = self.adjacent(direction);
         if !Self::walkable(self.block_at(next)) { self.events.push(WorldEvent::Message("那里被资源挡住了，先挖开再走。".into())); return; }
         let from = self.player; self.player = next; self.events.push(WorldEvent::Moved { from, to: next });
-        if self.night && self.monsters.iter().any(|monster| monster.distance(self.player) == 1) && !self.player_has_torch() { self.hp = self.hp.saturating_sub(1); self.events.push(WorldEvent::PlayerHurt { hp: self.hp }); }
+        if self.night && self.monsters.iter().any(|monster| monster.distance(self.player) == 1) && !self.player_has_torch() { self.hurt_player(); }
+    }
+    fn hurt_player(&mut self) {
+        if self.hp == 0 || self.lives == 0 { return; }
+        self.hp -= 1;
+        self.events.push(WorldEvent::PlayerHurt { hp: self.hp });
+        if self.hp > 0 { return; }
+        self.lives = self.lives.saturating_sub(1);
+        self.events.push(WorldEvent::PlayerLostLife { lives_remaining: self.lives });
+        if self.lives == 0 { self.events.push(WorldEvent::PlayerDefeated); return; }
+        self.player = SPAWN_POINT;
+        self.hp = MAX_HP;
+        self.monsters.clear();
+        self.events.push(WorldEvent::PlayerRespawned { pos: SPAWN_POINT });
     }
     fn break_at(&mut self, target: Pos) {
         if self.player.distance(target) > 1 { self.events.push(WorldEvent::Message("你够不到那里。".into())); return; }
         let block = self.block_at(target);
-        if matches!(block, Block::Wall | Block::StoneWall | Block::PlacedDirt) { self.events.push(WorldEvent::Message("这是建造结构，不能用挖掘模式破坏。".into())); return; }
+        if matches!(block, Block::Wall | Block::StoneWall | Block::PlacedDirt) { self.events.push(WorldEvent::Message("这是建造结构，不能直接采集破坏。".into())); return; }
         let gain = match block { Block::Tree => Some((PlaceBlock::WoodWall, 2)), Block::Stone => Some((PlaceBlock::Stone, 1)), Block::Dirt => Some((PlaceBlock::Dirt, 2)), Block::Torch => Some((PlaceBlock::Torch, 1)), _ => None };
         let Some((item, amount)) = gain else { self.events.push(WorldEvent::Message("这块方块没有可以采集的材料。".into())); return };
         self.set_block(target, Block::Grass); self.add_item(item, amount); self.events.push(WorldEvent::BlockBroken { pos: target, block }); self.events.push(WorldEvent::ItemCollected { item, amount });
     }
     fn place_at(&mut self, target: Pos, item: PlaceBlock) {
         if self.player.distance(target) > 1 { self.events.push(WorldEvent::Message("你够不到那里。".into())); return; }
-        if !matches!(self.block_at(target), Block::Grass | Block::Dirt) { self.events.push(WorldEvent::Message("这里只能在草地或泥土上放置。".into())); return; }
+        if !matches!(self.block_at(target), Block::Grass) { self.events.push(WorldEvent::Message("这里只能在空草地上放置。".into())); return; }
         if !self.remove_item(item) { self.events.push(WorldEvent::Message("你的材料不够。".into())); return; }
         let block = match item { PlaceBlock::WoodWall => Block::Wall, PlaceBlock::Stone => Block::StoneWall, PlaceBlock::Dirt => Block::PlacedDirt, PlaceBlock::Torch => Block::Torch };
         self.set_block(target, block); self.events.push(WorldEvent::BlockPlaced { pos: target, block });
@@ -181,13 +220,15 @@ mod tests {
     #[test] fn only_grass_and_torches_are_walkable() { let mut world = World::new(20, 12); for (offset, block) in [(1, Block::Tree), (2, Block::Stone), (3, Block::Dirt), (4, Block::Torch), (5, Block::Wall), (6, Block::Water)] { world.set_block(Pos::new(9 + offset, 6), block); } world.apply(PlayerCommand::Move(Direction::Right)); assert_eq!(world.snapshot().player, Pos::new(9, 6)); world.set_block(Pos::new(10, 6), Block::Torch); world.apply(PlayerCommand::Move(Direction::Right)); assert_eq!(world.snapshot().player, Pos::new(10, 6)); }
     #[test] fn night_reduces_visibility() { let mut world = World::new(20, 12); let daylight = world.observation(6); assert_ne!(daylight.nearby.iter().find(|(pos, _)| *pos == Pos::new(14, 6)).unwrap().1, Block::Unknown); for _ in 0..11 { world.tick(); } let night = world.observation(6); assert_eq!(night.nearby.iter().find(|(pos, _)| *pos == Pos::new(14, 6)).unwrap().1, Block::Unknown); }
     #[test] fn torch_reveals_darkness() { let mut world = World::new(20, 12); world.apply(PlayerCommand::PlaceAt(Pos::new(10, 6), PlaceBlock::Torch)); for _ in 0..11 { world.tick(); } let observation = world.observation(6); assert_eq!(observation.nearby.iter().find(|(pos, _)| *pos == Pos::new(13, 6)).unwrap().1, Block::Grass); }
-    #[test] fn dirt_can_hold_a_new_block() { let mut world = World::new(20, 12); world.set_block(Pos::new(10, 6), Block::Dirt); world.apply(PlayerCommand::PlaceAt(Pos::new(10, 6), PlaceBlock::Torch)); assert_eq!(world.snapshot().modified.iter().find(|(pos, _)| *pos == Pos::new(10, 6)).unwrap().1, Block::Torch); }
+    #[test] fn resources_cannot_be_replaced_without_mining() { let mut world = World::new(20, 12); world.set_block(Pos::new(10, 6), Block::Dirt); world.apply(PlayerCommand::PlaceAt(Pos::new(10, 6), PlaceBlock::Torch)); assert_eq!(world.block_at(Pos::new(10, 6)), Block::Dirt); assert!(world.drain_events().iter().any(|event| matches!(event, WorldEvent::Message(message) if message.contains("空草地")))); }
     #[test] fn placed_stone_is_distinct_from_natural_stone() { let mut world = World::new(20, 12); world.apply(PlayerCommand::PlaceAt(Pos::new(10, 6), PlaceBlock::Stone)); assert_eq!(world.snapshot().modified.iter().find(|(pos, _)| *pos == Pos::new(10, 6)).unwrap().1, Block::StoneWall); }
     #[test] fn placed_dirt_is_distinct_from_natural_dirt() { let mut world = World::new(20, 12); world.apply(PlayerCommand::PlaceAt(Pos::new(10, 6), PlaceBlock::Dirt)); assert_eq!(world.snapshot().modified.iter().find(|(pos, _)| *pos == Pos::new(10, 6)).unwrap().1, Block::PlacedDirt); }
-    #[test] fn mining_mode_cannot_destroy_constructed_structures() { let mut world = World::new(20, 12); world.apply(PlayerCommand::PlaceAt(Pos::new(10, 6), PlaceBlock::Stone)); world.drain_events(); world.apply(PlayerCommand::BreakAt(Pos::new(10, 6))); assert_eq!(world.snapshot().modified.iter().find(|(pos, _)| *pos == Pos::new(10, 6)).unwrap().1, Block::StoneWall); assert!(world.drain_events().iter().any(|event| matches!(event, WorldEvent::Message(message) if message.contains("建造结构")))); }
+    #[test] fn ordinary_mining_cannot_destroy_constructed_structures() { let mut world = World::new(20, 12); world.apply(PlayerCommand::PlaceAt(Pos::new(10, 6), PlaceBlock::Stone)); world.drain_events(); world.apply(PlayerCommand::BreakAt(Pos::new(10, 6))); assert_eq!(world.snapshot().modified.iter().find(|(pos, _)| *pos == Pos::new(10, 6)).unwrap().1, Block::StoneWall); assert!(world.drain_events().iter().any(|event| matches!(event, WorldEvent::Message(message) if message.contains("建造结构")))); }
     #[test] fn enclosed_walls_protect_from_monsters() { let mut world = World::new(20, 12); for pos in [Pos::new(8, 5), Pos::new(9, 5), Pos::new(10, 5), Pos::new(8, 6), Pos::new(10, 6), Pos::new(8, 7), Pos::new(9, 7), Pos::new(10, 7)] { world.set_block(pos, Block::Wall); } world.monsters.push(Pos::new(7, 6)); world.tick = 16; world.night = true; world.tick(); assert_eq!(world.snapshot().hp, MAX_HP); }
     #[test] fn torch_repels_monsters_without_a_shelter() { let mut world = World::new(20, 12); world.set_block(Pos::new(9, 6), Block::Torch); world.monsters.push(Pos::new(10, 6)); world.tick = 16; world.night = true; world.tick(); assert_eq!(world.snapshot().hp, MAX_HP); }
     #[test] fn visible_monster_moves_toward_player_at_night() { let mut world = World::new(20, 12); world.inventory.torch = 0; world.monsters.push(Pos::new(12, 6)); world.tick = 16; world.night = true; world.tick(); assert_eq!(world.snapshot().monsters, vec![Pos::new(11, 6)]); }
+    #[test] fn adjacent_monster_attacks_on_the_danger_heartbeat() { let mut world = World::new(20, 12); world.inventory.torch = 0; world.monsters.push(Pos::new(10, 6)); world.night = true; world.danger_tick(); assert_eq!(world.snapshot().hp, MAX_HP - 1); }
+    #[test] fn empty_health_bar_consumes_one_life_and_respawns() { let mut world = World::new(20, 12); for _ in 0..MAX_HP { world.hurt_player(); } let snapshot = world.snapshot(); assert_eq!(snapshot.lives, STARTING_LIVES - 1); assert_eq!(snapshot.hp, MAX_HP); assert_eq!(snapshot.player, SPAWN_POINT); assert!(world.drain_events().contains(&WorldEvent::PlayerRespawned { pos: SPAWN_POINT })); }
     #[test] fn monster_attack_happens_when_player_moves_next_to_it() { let mut world = World::new(20, 12); world.inventory.torch = 0; world.monsters.push(Pos::new(11, 6)); world.tick = 16; world.night = true; world.apply(PlayerCommand::Move(Direction::Right)); assert_eq!(world.snapshot().hp, MAX_HP - 1); }
-    #[test] fn opaque_block_hides_player_from_monster() { let mut world = World::new(20, 12); world.inventory.torch = 0; world.set_block(Pos::new(10, 6), Block::Wall); world.monsters.push(Pos::new(11, 6)); world.tick = 16; world.night = true; world.tick(); assert_eq!(world.snapshot().monsters, vec![Pos::new(11, 6)]); assert_eq!(world.snapshot().hp, MAX_HP); }
+    #[test] fn wall_forces_monster_to_reroute_toward_an_opening() { let mut world = World::new(20, 12); world.inventory.torch = 0; world.set_block(Pos::new(10, 6), Block::Wall); world.monsters.push(Pos::new(11, 6)); world.tick = 16; world.night = true; world.tick(); assert_eq!(world.snapshot().monsters, vec![Pos::new(11, 5)]); assert_eq!(world.snapshot().hp, MAX_HP); assert!(world.drain_events().iter().any(|event| matches!(event, WorldEvent::MonsterRerouted { from, to } if *from == Pos::new(11, 6) && *to == Pos::new(11, 5)))); }
 }
