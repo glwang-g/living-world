@@ -15,6 +15,7 @@ impl WorldRunner {
     pub fn from_world(world: World) -> Self { Self { world, bot: None } }
     pub fn with_bot(mut self, bot: Box<dyn Bot>) -> Self { self.bot = Some(bot); self }
     pub fn command(&mut self, command: PlayerCommand) { self.world.apply(command); }
+    pub fn danger_step(&mut self) -> Vec<WorldEvent> { self.world.danger_tick(); self.world.drain_events() }
     pub fn step(&mut self) -> (WorldSnapshot, Vec<WorldEvent>) {
         if let Some(bot) = &mut self.bot {
             let intent = bot.decide(&self.world.observation(1));
