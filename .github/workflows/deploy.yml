@@ -25,7 +25,7 @@ jobs:
 
       - name: Prepare the empty server for source synchronization
         run: |
-          ssh -o BatchMode=yes -o ConnectTimeout=15 ubuntu@living.freexlib.com '
+          ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=8 ubuntu@living.freexlib.com '
             set -e
             mkdir -p /home/ubuntu/living-world
             if ! command -v rsync >/dev/null; then
@@ -48,7 +48,7 @@ jobs:
 
       - name: Bootstrap or update production
         run: |
-          ssh -o BatchMode=yes -o ConnectTimeout=15 ubuntu@living.freexlib.com '
+          ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=8 ubuntu@living.freexlib.com '
             set -e
             cd /home/ubuntu/living-world
             if ! command -v node >/dev/null || ! command -v cargo >/dev/null; then
