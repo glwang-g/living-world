@@ -21,11 +21,23 @@ jobs:
           ssh-private-key: ${{ secrets.LIVING_WORLD_DEPLOY_KEY }}
 
       - name: Trust production host
-        run: ssh-keyscan -H living.freexlib.com >> ~/.ssh/known_hosts
+        run: timeout 15 ssh-keyscan -H living.freexlib.com >> ~/.ssh/known_hosts
+
+      - name: Prepare the empty server for source synchronization
+        run: |
+          ssh -o BatchMode=yes -o ConnectTimeout=15 ubuntu@living.freexlib.com '
+            set -e
+            mkdir -p /home/ubuntu/living-world
+            if ! command -v rsync >/dev/null; then
+              sudo apt-get update
+              sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y rsync
+            fi
+          '
 
       - name: Synchronize source without touching world data
         run: |
-          rsync -az --delete \
+          rsync -az --delete --human-readable \
+            -e 'ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=2' \
             --exclude .git \
             --exclude node_modules \
             --exclude dist \
@@ -36,7 +48,7 @@ jobs:
 
       - name: Bootstrap or update production
         run: |
-          ssh ubuntu@living.freexlib.com '
+          ssh -o BatchMode=yes -o ConnectTimeout=15 ubuntu@living.freexlib.com '
             set -e
             cd /home/ubuntu/living-world
             if ! command -v node >/dev/null || ! command -v cargo >/dev/null; then
