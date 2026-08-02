@@ -1,0 +1,50 @@
+name: Deploy Living World
+
+on:
+  push:
+    branches: [master]
+
+concurrency:
+  group: living-world-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the exact pushed revision
+        uses: actions/checkout@v4
+
+      - name: Load deployment SSH key
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.LIVING_WORLD_DEPLOY_KEY }}
+
+      - name: Trust production host
+        run: ssh-keyscan -H living.freexlib.com >> ~/.ssh/known_hosts
+
+      - name: Synchronize source without touching world data
+        run: |
+          rsync -az --delete \
+            --exclude .git \
+            --exclude node_modules \
+            --exclude dist \
+            --exclude .wrangler \
+            --exclude engine/target \
+            --exclude engine/data \
+            ./ ubuntu@living.freexlib.com:/home/ubuntu/living-world/
+
+      - name: Bootstrap or update production
+        run: |
+          ssh ubuntu@living.freexlib.com '
+            set -e
+            cd /home/ubuntu/living-world
+            if ! command -v node >/dev/null || ! command -v cargo >/dev/null; then
+              bash scripts/install-remote-prerequisites.sh
+            fi
+            if ! systemctl cat living-world-web.service >/dev/null 2>&1; then
+              bash scripts/install-remote-services.sh
+            else
+              bash scripts/deploy-remote.sh
+            fi
+          '

@@ -1,0 +1,15 @@
+[Unit]
+Description=Living World authoritative world server
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/living-world
+Environment=LIVING_WORLD_DATA_DIR=/home/ubuntu/living-world/engine/data
+ExecStart=/home/ubuntu/living-world/engine/target/release/world-server
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

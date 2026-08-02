@@ -30,6 +30,7 @@ function makeWorld(): Tile[][] {
 
 const tileIcon: Record<TileType, string> = { grass: "", tree: "🌲", stone: "⛰️", "stone-wall": "🧱", water: "", dirt: "🟫", "placed-dirt": "🟫", wall: "🪵", torch: "🔥", unknown: "" };
 const SAVE_KEY = "living-world:blockworld:v1";
+const API_BASE = "/api";
 const initialLogs: LogEntry[] = [{ day: 1, text: "你在一片陌生的草地醒来。太阳正在落山，最好在夜晚前搭一面墙。", tone: "system" }];
 
 export default function Home() {
@@ -158,10 +159,10 @@ export default function Home() {
     let cancelled = false;
     const sync = async () => {
       try {
-        const response = await fetch(`http://127.0.0.1:8787/api/snapshot?columns=${viewColumns}&rows=${viewRows}`, { cache: "no-store" });
+        const response = await fetch(`${API_BASE}/snapshot?columns=${viewColumns}&rows=${viewRows}`, { cache: "no-store" });
         if (!response.ok) throw new Error("world server unavailable");
         const snapshot = await response.json() as ServerSnapshot;
-        const eventResponse = await fetch("http://127.0.0.1:8787/api/events", { cache: "no-store" });
+        const eventResponse = await fetch(`${API_BASE}/events`, { cache: "no-store" });
         const events = eventResponse.ok ? await eventResponse.json() as ServerEvent[] : [];
         if (!cancelled) {
           applyServerSnapshot(snapshot);
@@ -228,7 +229,7 @@ export default function Home() {
   const sendCommand = async (payload: Record<string, string | number>): Promise<boolean> => {
     if (!serverOnline) { log("世界服务尚未连接。请先启动 Rust world-server。", "danger"); return false; }
     try {
-      const response = await fetch("http://127.0.0.1:8787/api/command", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      const response = await fetch(`${API_BASE}/command`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
       if (!response.ok) { log("世界服务拒绝了这个操作，请重启 world-server 后再试。", "danger"); return false; }
       const result = await response.json() as { accepted?: boolean };
       if (result.accepted !== true) { log("世界服务没有接受这个操作，请确认后端已更新。", "danger"); return false; }
@@ -298,13 +299,13 @@ export default function Home() {
     if (!serverOnline) { showNotice("世界服务未连接，暂时无法保存档案。"); return; }
     const name = archiveName.trim() || `第${day}天的防线`;
     try {
-      const response = await fetch("http://127.0.0.1:8787/api/archive", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) });
+      const response = await fetch(`${API_BASE}/archive`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) });
       if (!response.ok) throw new Error("archive rejected");
       setArchiveSaved(true); setArchiveName(name); void loadArchives(); showNotice(`世界档案「${name}」已保存。可在世界历史底部的档案馆查看。`);
     } catch { showNotice("档案保存失败，请确认世界服务仍在运行。"); }
   };
-const loadArchives = async () => { try { const response = await fetch("http://127.0.0.1:8787/api/archives"); if (!response.ok) throw new Error("archives rejected"); setArchives(await response.json() as ArchiveSummary[]); setArchiveLoadFailed(false); } catch { setArchiveLoadFailed(true); } };
-  const historyUrl = (archiveId: string | null, offset: number, day?: number) => `${archiveId === null ? `http://127.0.0.1:8787/api/events?offset=${offset}&limit=${HISTORY_PAGE_SIZE}` : `http://127.0.0.1:8787/api/archive/events?id=${encodeURIComponent(archiveId)}&offset=${offset}&limit=${HISTORY_PAGE_SIZE}`}${day ? `&day=${day}` : ""}`;
+const loadArchives = async () => { try { const response = await fetch(`${API_BASE}/archives`); if (!response.ok) throw new Error("archives rejected"); setArchives(await response.json() as ArchiveSummary[]); setArchiveLoadFailed(false); } catch { setArchiveLoadFailed(true); } };
+  const historyUrl = (archiveId: string | null, offset: number, day?: number) => `${archiveId === null ? `${API_BASE}/events?offset=${offset}&limit=${HISTORY_PAGE_SIZE}` : `${API_BASE}/archive/events?id=${encodeURIComponent(archiveId)}&offset=${offset}&limit=${HISTORY_PAGE_SIZE}`}${day ? `&day=${day}` : ""}`;
   const historyPageKey = (archiveId: string | null, offset: number) => `${archiveId ?? "live"}:${offset}`;
   const requestHistoryPage = (archiveId: string | null, offset: number) => { const key = historyPageKey(archiveId, offset); const cached = historyPageCacheRef.current.get(key); if (cached) return cached; const request = fetch(historyUrl(archiveId, offset)).then(async (response) => { if (!response.ok) throw new Error("history page rejected"); return await response.json() as HistoryPage; }).catch((error) => { historyPageCacheRef.current.delete(key); throw error; }); historyPageCacheRef.current.set(key, request); return request; };
   const prefetchHistoryPage = (archiveId: string | null, offset: number, total: number) => { if (offset < total) void requestHistoryPage(archiveId, offset).catch(() => undefined); };
@@ -315,7 +316,7 @@ const loadArchives = async () => { try { const response = await fetch("http://12
   const loadPreviousHistory = async () => { if (historyLoadingPrevious || historyStart === 0) return; const source = selectedArchiveId; const requestId = historyRequestRef.current; const offset = Math.max(0, historyStart - HISTORY_PAGE_SIZE); const scroll = historyScrollRef.current; if (scroll) historyPrependRef.current = { height: scroll.scrollHeight, top: scroll.scrollTop }; setHistoryLoadingPrevious(true); try { const page = await requestHistoryPage(source, offset); if (requestId !== historyRequestRef.current) { historyPrependRef.current = null; return; } setHistoryLogs((current) => [...toHistoryEntries(page.events), ...current]); setHistoryStart(offset); setHistoryTotal(page.total); prefetchHistoryPage(source, Math.max(0, offset - HISTORY_PAGE_SIZE), page.total); } catch { historyPrependRef.current = null; if (requestId === historyRequestRef.current) setHistoryLoadFailed(true); } finally { if (requestId === historyRequestRef.current) setHistoryLoadingPrevious(false); } };
   const jumpToLatestHistory = async () => { if (!historyTotal) return; const source = selectedArchiveId; const requestId = ++historyRequestRef.current; const offset = Math.floor((historyTotal - 1) / HISTORY_PAGE_SIZE) * HISTORY_PAGE_SIZE; setHistoryRefreshing(true); try { const page = await requestHistoryPage(source, offset); if (requestId !== historyRequestRef.current) return; setHistoryLogs(toHistoryEntries(page.events)); setHistoryStart(offset); setHistoryTotal(page.total); setHistoryLoadFailed(false); historyScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" }); prefetchHistoryPage(source, Math.max(0, offset - HISTORY_PAGE_SIZE), page.total); } catch { if (requestId === historyRequestRef.current) setHistoryLoadFailed(true); } finally { if (requestId === historyRequestRef.current) setHistoryRefreshing(false); } };
   const jumpToHistoryDay = async () => { const day = Number(historyDay); if (!Number.isInteger(day) || day < 1) { showNotice("请输入有效的第 N 天。 "); return; } const source = selectedArchiveId; const requestId = ++historyRequestRef.current; setHistoryRefreshing(true); try { const response = await fetch(historyUrl(source, 0, day)); if (!response.ok) throw new Error("day jump rejected"); const page = await response.json() as HistoryPage; if (requestId !== historyRequestRef.current) return; setHistoryLogs(toHistoryEntries(page.events)); setHistoryStart(page.offset); setHistoryTotal(page.total); setHistoryLoadFailed(false); historyScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" }); prefetchHistoryPage(source, Math.max(0, page.offset - HISTORY_PAGE_SIZE), page.total); prefetchHistoryPage(source, page.offset + page.events.length, page.total); } catch { if (requestId === historyRequestRef.current) { setHistoryLoadFailed(true); showNotice("无法跳转到这一天，请确认世界服务已更新。"); } } finally { if (requestId === historyRequestRef.current) setHistoryRefreshing(false); } };
-  const deleteArchive = async (archive: ArchiveSummary) => { if (!window.confirm(`彻底删除世界档案「${archive.name}」？此操作不可恢复。`)) return; try { const response = await fetch("http://127.0.0.1:8787/api/archive/delete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: archive.id }) }); if (!response.ok) throw new Error(); setArchives((current) => current.filter((item) => item.id !== archive.id)); if (selectedArchiveId === archive.id) void loadLiveHistory(); showNotice(`已彻底删除「${archive.name}」。`); } catch { showNotice("删除失败，请确认世界服务仍在运行。"); } };
+  const deleteArchive = async (archive: ArchiveSummary) => { if (!window.confirm(`彻底删除世界档案「${archive.name}」？此操作不可恢复。`)) return; try { const response = await fetch(`${API_BASE}/archive/delete`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: archive.id }) }); if (!response.ok) throw new Error(); setArchives((current) => current.filter((item) => item.id !== archive.id)); if (selectedArchiveId === archive.id) void loadLiveHistory(); showNotice(`已彻底删除「${archive.name}」。`); } catch { showNotice("删除失败，请确认世界服务仍在运行。"); } };
   const canReach = (x: number, y: number) => Math.abs(x - player.x) + Math.abs(y - player.y) === 1;
   const facingFromDelta = (dx: number, dy: number): Facing => Math.abs(dx) >= Math.abs(dy) ? (dx < 0 ? "left" : "right") : (dy < 0 ? "up" : "down");
   const animateWalk = () => {

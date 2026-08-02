@@ -36,3 +36,7 @@ npm run dev
 ```bash
 npm run build
 ```
+
+## 生产部署
+
+`master` 推送可自动部署到 `living.freexlib.com`。首次安装、Nginx 合并方式和 GitHub SSH Secret 配置见 [远端部署说明](docs/REMOTE_DEPLOYMENT.md)。
