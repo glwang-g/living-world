@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ -z "${LIVING_WORLD_DEPLOY_LOCKED:-}" ]]; then
+  exec env LIVING_WORLD_DEPLOY_LOCKED=1 flock -n /tmp/living-world-deploy.lock "$0" "$@"
+fi
+
 cd /home/ubuntu/living-world
 
 if [[ -f "$HOME/.cargo/env" ]]; then
