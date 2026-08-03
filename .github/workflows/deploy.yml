@@ -6,7 +6,9 @@ on:
 
 concurrency:
   group: living-world-production
-  cancel-in-progress: true
+  # A cancelled GitHub job does not reliably terminate a long-running remote
+  # compiler/install process. Queue deployments instead of overlapping them.
+  cancel-in-progress: false
 
 jobs:
   deploy:
