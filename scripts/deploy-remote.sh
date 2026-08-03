@@ -12,6 +12,14 @@ if [[ -f "$HOME/.cargo/env" ]]; then
   source "$HOME/.cargo/env"
 fi
 
+# A cancelled bootstrap can leave rustup's cargo shim in PATH while the stable
+# toolchain itself is incomplete. Revalidate here as a final guard before any
+# build step, independent of how this script was invoked.
+if ! cargo --version >/dev/null 2>&1; then
+  bash scripts/install-remote-prerequisites.sh
+  source "$HOME/.cargo/env"
+fi
+
 npm ci
 npm run build
 cargo build --release --manifest-path engine/Cargo.toml -p world-server
