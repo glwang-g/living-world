@@ -53,7 +53,7 @@ jobs:
           ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=8 ubuntu@living.freexlib.com '
             set -e
             cd /home/ubuntu/living-world
-            if ! command -v node >/dev/null || ! command -v cargo >/dev/null; then
+            if ! command -v node >/dev/null || ! cargo --version >/dev/null 2>&1; then
               bash scripts/install-remote-prerequisites.sh
             fi
             if ! systemctl cat living-world-web.service >/dev/null 2>&1; then
