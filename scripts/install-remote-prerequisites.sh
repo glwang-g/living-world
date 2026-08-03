@@ -20,10 +20,16 @@ if ! command -v node >/dev/null || [[ $(node -p 'process.versions.node.split("."
   sudo apt-get install -y nodejs
 fi
 
-if ! command -v cargo >/dev/null; then
+if ! command -v cargo >/dev/null || ! cargo --version >/dev/null 2>&1; then
   # A cancelled rustup download can leave incomplete artifacts behind. The
   # lock above ensures no other installer is using these temporary files.
   mkdir -p "$HOME/.rustup/downloads"
   find "$HOME/.rustup/downloads" -maxdepth 1 -type f -name '*.partial' -delete
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+  if ! command -v rustup >/dev/null; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+  else
+    rustup toolchain uninstall stable >/dev/null 2>&1 || true
+    rustup toolchain install stable --profile minimal
+    rustup default stable
+  fi
 fi
