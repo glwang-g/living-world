@@ -47,6 +47,8 @@ export default function Home() {
   const [tick, setTick] = useState(1);
   const [mode, setMode] = useState<"world" | "history">("world");
   const [helpOpen, setHelpOpen] = useState(false);
+  const [mobileHudExpanded, setMobileHudExpanded] = useState(false);
+  const [mobileBuildMode, setMobileBuildMode] = useState(false);
   const [showAllLogs, setShowAllLogs] = useState(false);
   const [built, setBuilt] = useState(0);
   const [monsters, setMonsters] = useState<Point[]>([]);
@@ -443,7 +445,7 @@ const loadArchives = async () => { try { const response = await fetch(`${API_BAS
       if (canReach(x, y)) executePlace(x, y); else startPathTo(x, y, "place");
       return;
     }
-    if (isMineable(tile) && !shiftHeld) { if (canReach(x, y)) executeMine(x, y); else startPathTo(x, y, "mine"); return; }
+    if (isMineable(tile)) { if (canReach(x, y)) executeMine(x, y); else startPathTo(x, y, "mine"); return; }
     if (isWalkable(tile)) { if (canReach(x, y)) move(x - player.x, y - player.y); else startPathTo(x, y, "move"); return; }
     startPathTo(x, y, "move");
   };
@@ -495,9 +497,11 @@ const loadArchives = async () => { try { const response = await fetch(`${API_BAS
     {helpOpen && <section className="tutorial" role="dialog" aria-label="新手说明"><div><p className="eyebrow">HOW TO PLAY</p><h2>三分钟了解这个世界</h2><small>开始一次有效行动后会自动收起；随时可以再打开。</small></div><button className="tutorial-close" onClick={() => setHelpOpen(false)}>关闭 ×</button><div className="tutorial-steps"><article><b>01</b><strong>先移动</strong><p>用 <kbd>WASD</kbd> 或方向键移动，也可以点击视野内的空草地自动寻路。</p></article><article><b>02</b><strong>点击即行动</strong><p>点击资源会走到旁边并自动挖掘；点击障碍物会尝试走到它旁边。</p></article><article><b>03</b><strong>按住建造</strong><p>按住 <kbd>Shift</kbd> 悬停空草地可预览选中方块，点击后会移动并放置。非空格仍只会接近目标。</p></article><article><b>❗</b><strong>用火把过夜</strong><p>把火把放在避难所内部、入口和道路旁。火把照亮周围并保护居民，但不是武器；夜里仍要留意墙外的脚步声。</p></article></div></section>}
     {mode === "world" ? <section className="game-layout">
       <aside className="game-sidebar">
-        <div className="status-card"><div className={"avatar-player facing-" + facing} aria-label={"角色朝向" + facingLabel[facing]}></div><h2>流浪者</h2><p>{night ? "❗ 夜晚 · 危险正在靠近" : "☀ 白天 · 适合探索和建造"}</p><div className="life-count" aria-label={"剩余 " + lives + " 条命"}>命数　{"●".repeat(lives)}<i>{"○".repeat(3 - lives)}</i></div><div className={"health-meter " + (hitFlash ? "hit" : "")} role="progressbar" aria-label="当前生命血量" aria-valuemin={0} aria-valuemax={5} aria-valuenow={hp}><span style={{ width: (hp * 20) + "%" }}></span></div><small className="health-label">血量 {hp} / 5</small></div>
-        <div className="goal-card"><p className="eyebrow">❗ 当前目标</p><strong>{objective}</strong><small>附近：{nearby.length ? nearby.join("、") : "安静的草地"}</small></div>
-        <div className={"defense-card " + (night ? "night" : "day")}><p className="eyebrow">防线读数</p><strong>{night ? (sheltered ? "封闭避难所" : torchLit ? "火光防线" : "入口暴露") : "准备阶段"}</strong><p>{defenseReadout}</p><small>规则：怪物只能走草地或火把格；墙体会改变它的路线。</small></div>
+        <section className="world-summary-card">
+          <div className="status-card"><div className={"avatar-player facing-" + facing} aria-label={"角色朝向" + facingLabel[facing]}></div><h2>流浪者</h2><p>{night ? "❗ 夜晚 · 危险正在靠近" : "☀ 白天 · 适合探索和建造"}</p><div className="life-count" aria-label={"剩余 " + lives + " 条命"}>命数　{"●".repeat(lives)}<i>{"○".repeat(3 - lives)}</i></div><div className={"health-meter " + (hitFlash ? "hit" : "")} role="progressbar" aria-label="当前生命血量" aria-valuemin={0} aria-valuemax={5} aria-valuenow={hp}><span style={{ width: (hp * 20) + "%" }}></span></div><small className="health-label">血量 {hp} / 5</small></div>
+          <div className="goal-card"><p className="eyebrow">❗ 当前目标</p><strong>{objective}</strong><small>附近：{nearby.length ? nearby.join("、") : "安静的草地"}</small></div>
+          <div className={"defense-card " + (night ? "night" : "day")}><p className="eyebrow">防线读数</p><strong>{night ? (sheltered ? "封闭避难所" : torchLit ? "火光防线" : "入口暴露") : "准备阶段"}</strong><p>{defenseReadout}</p><small>规则：怪物只能走草地或火把格；墙体会改变它的路线。</small></div>
+        </section>
         <div className="inventory-card"><p className="eyebrow">背包</p>{(Object.keys(blockInfo) as Block[]).map((block) => <button title={"选择" + blockInfo[block].label} className={"inventory-item " + (selected === block ? "selected" : "")} key={block} onClick={() => setSelected(block)}><b>{blockInfo[block].icon}</b><span>{blockInfo[block].label}</span><em>{inventory[block]}</em></button>)}</div>
         <div className="controls-card"><p className="eyebrow">操作与反馈</p><span><kbd>WASD</kbd> / 方向键移动</span><span>点击资源挖掘，点击空草地移动</span><span><kbd>Shift</kbd> + 悬停空草地：预览并放置选中方块</span><button className="mini-help" onClick={() => setHelpOpen(true)}>❔ 再看一遍教学</button><button className="mini-reset" onClick={resetGame}>重新开始这个世界</button><div className="log-strip control-log-strip"><div className="log-strip-head"><span>近期世界事件 · {logs.length}</span><button onClick={() => setShowAllLogs((value) => !value)}>{showAllLogs ? "收起" : "查看更多"}</button></div><div className={showAllLogs ? "log-list expanded" : "log-list"}>{logs.slice(showAllLogs ? -40 : -5).reverse().map((entry, index) => <p className={entry.tone ?? ""} key={entry.day + "-" + index}>第{entry.day}天　{entry.text}</p>)}</div></div></div>
       </aside>
@@ -506,8 +510,22 @@ const loadArchives = async () => { try { const response = await fetch(`${API_BAS
         {notice && <div className="world-notice" role="status">⚠ {notice}</div>}
         {gameOver && <section className="game-over" role="dialog" aria-modal="true" aria-labelledby="game-over-title"><p className="eyebrow">WORLD ENDED · 第 {day} 天</p><h2 id="game-over-title">这一次冒险结束了</h2><p>三条生命都耗尽了。给这个世界留一个名字，重开后它仍会作为档案被保留。</p><label className="archive-name"><span>世界档案名称</span><input value={archiveName} maxLength={40} onChange={(event) => setArchiveName(event.target.value)} placeholder="例如：火把与窄口" disabled={archiveSaved} /></label><div className="final-events"><strong>最后的世界事件</strong>{finalEvents.length ? finalEvents.map((entry, index) => <span key={entry.text + index}>第{entry.day}天　{entry.text}</span>) : <span>黑暗吞没了最后一处可见的草地。</span>}</div><div className="game-over-actions"><button className="save-archive" onClick={saveArchive} disabled={archiveSaved}>{archiveSaved ? "档案已保存" : "保存世界档案"}</button><button className="restart-world" onClick={resetGame}>重新开始</button><button className="review-history" onClick={() => { setMode("history"); void loadArchives(); void loadLiveHistory(); }}>查看世界历史</button></div></section>}
         <div className="world-viewport" aria-label="可以移动和编辑的方块世界">
+        <section className={"mobile-world-hud " + (mobileHudExpanded ? "expanded" : "")} aria-label="角色与世界状态">
+          <button className="mobile-world-hud-toggle" aria-expanded={mobileHudExpanded} onClick={() => setMobileHudExpanded((value) => !value)}>
+            <span className={"mobile-hud-avatar facing-" + facing} aria-hidden="true"></span>
+            <span className="mobile-hud-title"><strong>流浪者</strong><small>{night ? "夜晚 · 小心墙外" : "白天 · 正在探索"}</small></span>
+            <span className="mobile-hud-vitals">♥ {hp}/5</span><span className="mobile-hud-chevron">⌄</span>
+          </button>
+          <div className="mobile-world-hud-details">
+            <div><p className="eyebrow">当前目标</p><strong>{objective}</strong><small>附近：{nearby.length ? nearby.join("、") : "安静的草地"}</small></div>
+            <div className={"mobile-defense " + (night ? "night" : "")}><p className="eyebrow">防线</p><strong>{night ? (sheltered ? "封闭避难所" : torchLit ? "火光防线" : "入口暴露") : "准备阶段"}</strong><small>{defenseReadout}</small></div>
+            <div className="mobile-hud-actions"><button className="mini-help" onClick={() => setHelpOpen(true)}>❔ 教学</button><button className="mini-reset" onClick={resetGame}>重新开始</button></div>
+            <div className="log-strip mobile-hud-log"><div className="log-strip-head"><span>近期事件</span><button onClick={() => setShowAllLogs((value) => !value)}>{showAllLogs ? "收起" : "更多"}</button></div><div className={showAllLogs ? "log-list expanded" : "log-list"}>{logs.slice(showAllLogs ? -40 : -3).reverse().map((entry, index) => <p className={entry.tone ?? ""} key={entry.day + "-mobile-" + index}>第{entry.day}天　{entry.text}</p>)}</div></div>
+          </div>
+        </section>
+        <div className={"mobile-resource-dock " + (mobileBuildMode ? "placing" : "")} aria-label="当前资源">{(Object.keys(blockInfo) as Block[]).map((block) => <button key={block} aria-pressed={selected === block && mobileBuildMode} aria-label={(selected === block && mobileBuildMode ? "退出放置模式，当前材料" : "选择并放置") + blockInfo[block].label + "，剩余 " + inventory[block]} className={selected === block ? "selected" : ""} onClick={() => { setSelected(block); setMobileBuildMode((current) => selected === block ? !current : true); }}><b>{blockInfo[block].icon}</b><em>{inventory[block]}</em></button>)}</div>
         <div key={cameraMotion.key} className={"block-world " + (night ? "night " : "") + (cameraMotion.x || cameraMotion.y ? "camera-panning" : "")} style={{ "--camera-shift-x": (cameraMotion.x * 100 / (world[0]?.length ?? 1)) + "%", "--camera-shift-y": (cameraMotion.y * 100 / (world.length || 1)) + "%" } as CSSProperties}>
-          {world.map((row, y) => row.map((tile, x) => { const monster = monsters.some((item) => item.x === x && item.y === y); return <button key={x + "-" + y} className={"block-tile " + tile.type + " " + (monster ? "monster" : "") + " " + (tile.discovered && tile.visible === false ? "remembered" : "")} onClick={(event) => editTile(x, y, event.shiftKey)} aria-label={x + "," + y + " " + tile.type}>{monster ? "☠" : tileIcon[tile.type]}</button>; }))}
+          {world.map((row, y) => row.map((tile, x) => { const monster = monsters.some((item) => item.x === x && item.y === y); return <button key={x + "-" + y} className={"block-tile " + tile.type + " " + (monster ? "monster" : "") + " " + (tile.discovered && tile.visible === false ? "remembered" : "")} onClick={(event) => editTile(x, y, event.shiftKey || mobileBuildMode)} aria-label={x + "," + y + " " + tile.type}>{monster ? "☠" : tileIcon[tile.type]}</button>; }))}
           {placementPreview && hoveredTile && <div className="placement-preview" role="status" style={{ left: ((hoveredTile.x + 0.5) * 100 / (world[0]?.length ?? 1)) + "%", top: ((hoveredTile.y + 0.5) * 100 / (world.length || 1)) + "%" }}><span className="placement-ghost">{blockInfo[selected].icon}</span><div><strong>放置：{blockInfo[selected].label}</strong><small>{inventory[selected] > 0 ? placementPlan : "材料不足，无法放置"}</small></div></div>}
           <div className={"player-actor facing-" + facing + " " + (walking ? "walking" : "")} aria-label={"角色朝向" + facingLabel[facing]} style={{ left: ((player.x + 0.5) * 100 / (world[0]?.length ?? 1)) + "%", top: ((player.y + 0.5) * 100 / (world.length || 1)) + "%", width: (100 / (world[0]?.length ?? 1)) + "%", height: (100 / (world.length || 1)) + "%" }} />
           <div className={"damage-flash " + (hitFlash ? "active" : "")} aria-hidden="true"><span>✦</span></div>
