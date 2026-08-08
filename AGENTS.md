@@ -86,3 +86,10 @@ MUD 角色视角和历史视角仍然属于核心方向：
 
 > 玩家通过搭建导线改变了门的开关规则，居民因此改走另一条路线，历史视角记录了这次变化。
 
+## 跨项目协作
+
+Freexlib 三件套（swarm-space / living-world / xshow）共享一份世界契约：词汇表、
+事件形态与分层映射统一放在同级 `freexlib-portal` 仓库的
+`docs/world-contract.zh-CN.md`（英文版 `docs/world-contract.md`）。本仓库的
+`world-core / world-runner / world-bot / world-protocol` 分层与契约保持一致；
+新增规则、动作或事件概念时，先对照契约，变更后同步更新契约文档。

@@ -3,6 +3,12 @@
 > 后续接手本项目时，优先阅读本文件最新一节，再阅读 [`PROJECT_ANCHOR.md`](./PROJECT_ANCHOR.md)。
 > `PROJECT_HANDOFF.md` 记录的是早期 MUD/居民原型，和当前 ComputerScienceWorld 方块世界方向并不完全一致。
 
+## 2026-08-08：README 同步与 Freexlib 世界契约
+
+- README 已从旧聚落原型描述更新为当前 ComputerScienceWorld 方块世界 + Rust 引擎方向。
+- 新增跨项目契约：Freexlib 三件套的词汇表、事件形态与分层映射统一放在同级
+  `freexlib-portal` 仓库 `docs/world-contract.zh-CN.md`；本项目 `AGENTS.md` 已加入链接。
+
 ## 2026-08-04：响应式世界 HUD
 
 ### 桌面与窄窗口
