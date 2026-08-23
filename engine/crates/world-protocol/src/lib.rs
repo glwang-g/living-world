@@ -22,13 +22,13 @@ impl Direction {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Block { Grass, Tree, Stone, StoneWall, Water, Dirt, PlacedDirt, Wall, Torch, Unknown }
+pub enum Block { Grass, Tree, Stone, StoneWall, Water, Dirt, PlacedDirt, Wall, Torch, SwitchOff, SwitchOn, Wire, DoorClosed, DoorOpen, Unknown }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PlaceBlock { WoodWall, Stone, Dirt, Torch }
+pub enum PlaceBlock { WoodWall, Stone, Dirt, Torch, Switch, Wire, Door }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PlayerCommand { Move(Direction), BreakAt(Pos), PlaceAt(Pos, PlaceBlock), Wait, Reset }
+pub enum PlayerCommand { Move(Direction), BreakAt(Pos), PlaceAt(Pos, PlaceBlock), ToggleAt(Pos), Wait, Reset }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Intent { Move(Direction), Break, Place(PlaceBlock), Wait }
@@ -38,6 +38,8 @@ pub enum WorldEvent {
     Moved { from: Pos, to: Pos },
     BlockBroken { pos: Pos, block: Block },
     BlockPlaced { pos: Pos, block: Block },
+    SignalChanged { pos: Pos, powered: bool },
+    DoorChanged { pos: Pos, open: bool },
     ItemCollected { item: PlaceBlock, amount: u8 },
     NightStarted,
     Dawn,
