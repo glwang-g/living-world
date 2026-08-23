@@ -2,12 +2,12 @@
 
 import { type CSSProperties, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-type TileType = "grass" | "tree" | "stone" | "stone-wall" | "water" | "dirt" | "placed-dirt" | "wall" | "torch" | "unknown";
+type TileType = "grass" | "tree" | "stone" | "stone-wall" | "water" | "dirt" | "placed-dirt" | "wall" | "torch" | "switch-off" | "switch-on" | "wire" | "door-closed" | "door-open" | "unknown";
 type Tile = { type: TileType; discovered?: boolean; visible?: boolean };
 type Point = { x: number; y: number };
 type Facing = "up" | "down" | "left" | "right";
 type LogEntry = { day: number; text: string; tone?: "danger" | "build" | "system" };
-type Block = "wood" | "stone" | "dirt" | "torch";
+type Block = "wood" | "stone" | "dirt" | "torch" | "switch" | "wire" | "door";
 type ServerSnapshot = { tick: number; origin_x: number; origin_y: number; width: number; height: number; blocks: TileType[]; player: Point; hp: number; lives: number; inventory: Record<Block, number>; monsters: Point[]; sounds: string[]; night: boolean; sheltered: boolean; torch_lit: boolean };
 type ServerEvent = { tick: number; actor: string; kind: string; location: Point | null; text: string };
 type ArchiveSummary = { id: string; name: string; day: number };
@@ -16,7 +16,7 @@ const HISTORY_PAGE_SIZE = 30;
 const toHistoryEntries = (events: ServerEvent[]): LogEntry[] => events.map((event) => ({ day: Math.floor((event.tick - 1) / 24) + 1, text: event.text, tone: event.kind === "night" || event.kind === "spawn" || event.kind === "movement" || event.kind === "damage" || event.kind === "death" || event.kind === "defeat" ? "danger" : event.kind === "building" || event.kind === "mining" || event.kind === "inventory" || event.kind === "reroute" || event.kind === "repelled" ? "build" : "system" }));
 
 const DEFAULT_WORLD_SIZE = 13;
-const blockInfo: Record<Block, { label: string; icon: string }> = { wood: { label: "木墙", icon: "🪵" }, stone: { label: "石墙", icon: "⛰️" }, dirt: { label: "泥土", icon: "🟫" }, torch: { label: "火把", icon: "🔥" } };
+const blockInfo: Record<Block, { label: string; icon: string }> = { wood: { label: "木墙", icon: "🪵" }, stone: { label: "石墙", icon: "⛰️" }, dirt: { label: "泥土", icon: "🟫" }, torch: { label: "火把", icon: "🔥" }, switch: { label: "开关", icon: "◉" }, wire: { label: "导线", icon: "─" }, door: { label: "门", icon: "▣" } };
 
 function makeWorld(): Tile[][] {
   return Array.from({ length: DEFAULT_WORLD_SIZE }, (_, y) => Array.from({ length: DEFAULT_WORLD_SIZE }, (_, x) => {
@@ -28,7 +28,7 @@ function makeWorld(): Tile[][] {
   }));
 }
 
-const tileIcon: Record<TileType, string> = { grass: "", tree: "🌲", stone: "⛰️", "stone-wall": "🧱", water: "", dirt: "🟫", "placed-dirt": "🟫", wall: "🪵", torch: "🔥", unknown: "" };
+const tileIcon: Record<TileType, string> = { grass: "", tree: "🌲", stone: "⛰️", "stone-wall": "🧱", water: "", dirt: "🟫", "placed-dirt": "🟫", wall: "🪵", torch: "🔥", "switch-off": "◉", "switch-on": "●", wire: "─", "door-closed": "▣", "door-open": "□", unknown: "" };
 const SAVE_KEY = "living-world:blockworld:v1";
 const API_BASE = "/api";
 const initialLogs: LogEntry[] = [{ day: 1, text: "你在一片陌生的草地醒来。太阳正在落山，最好在夜晚前搭一面墙。", tone: "system" }];
@@ -42,7 +42,7 @@ export default function Home() {
   const [hitFlash, setHitFlash] = useState(false);
   const [hp, setHp] = useState(5);
   const [lives, setLives] = useState(3);
-  const [inventory, setInventory] = useState<Record<Block, number>>({ wood: 6, stone: 3, dirt: 12, torch: 4 });
+  const [inventory, setInventory] = useState<Record<Block, number>>({ wood: 6, stone: 3, dirt: 12, torch: 4, switch: 1, wire: 8, door: 1 });
   const [selected, setSelected] = useState<Block>("wood");
   const [tick, setTick] = useState(1);
   const [mode, setMode] = useState<"world" | "history">("world");
@@ -152,7 +152,7 @@ export default function Home() {
     }
     previousHpRef.current = snapshot.hp;
     previousLivesRef.current = snapshot.lives;
-    setPlayer({ x: snapshot.player.x - origin.x, y: snapshot.player.y - origin.y }); setHp(snapshot.hp); setLives(snapshot.lives); setInventory(snapshot.inventory); setTick(snapshot.tick); setMonsters(snapshot.monsters.map((monster) => ({ x: monster.x - origin.x, y: monster.y - origin.y }))); setSounds(snapshot.sounds); setSheltered(snapshot.sheltered); setTorchLit(snapshot.torch_lit); setServerOnline(true);
+    setPlayer({ x: snapshot.player.x - origin.x, y: snapshot.player.y - origin.y }); setHp(snapshot.hp); setLives(snapshot.lives); setInventory({ switch: 1, wire: 8, door: 1, ...snapshot.inventory }); setTick(snapshot.tick); setMonsters(snapshot.monsters.map((monster) => ({ x: monster.x - origin.x, y: monster.y - origin.y }))); setSounds(snapshot.sounds); setSheltered(snapshot.sheltered); setTorchLit(snapshot.torch_lit); setServerOnline(true);
   };
 
   useEffect(() => () => { if (hitTimerRef.current !== null) window.clearTimeout(hitTimerRef.current); }, []);
@@ -294,7 +294,7 @@ export default function Home() {
     if (!window.confirm("确定要放弃当前世界，从第一天重新开始吗？")) return;
     if (serverOnline && !(await sendCommand({ command: "reset" }))) return;
     window.localStorage.removeItem(SAVE_KEY);
-    const freshWorld = makeWorld(); worldRef.current = freshWorld; cameraOriginRef.current = { x: 0, y: 0 }; setWorld(freshWorld); setWorldOrigin({ x: 0, y: 0 }); setPlayer({ x: 9, y: 6 }); setHp(5); setLives(3); setInventory({ wood: 6, stone: 3, dirt: 12, torch: 4 }); setSelected("wood"); setTick(6); setBuilt(0); setMonsters([]); setSounds([]); setSheltered(false); setTorchLit(false); setLogs(initialLogs); setArchiveSaved(false); setArchiveName("");
+    const freshWorld = makeWorld(); worldRef.current = freshWorld; cameraOriginRef.current = { x: 0, y: 0 }; setWorld(freshWorld); setWorldOrigin({ x: 0, y: 0 }); setPlayer({ x: 9, y: 6 }); setHp(5); setLives(3); setInventory({ wood: 6, stone: 3, dirt: 12, torch: 4, switch: 1, wire: 8, door: 1 }); setSelected("wood"); setTick(6); setBuilt(0); setMonsters([]); setSounds([]); setSheltered(false); setTorchLit(false); setLogs(initialLogs); setArchiveSaved(false); setArchiveName("");
   };
   const saveArchive = async () => {
     if (archiveSaved) return;
@@ -346,7 +346,7 @@ const loadArchives = async () => { try { const response = await fetch(`${API_BAS
     if (monsters.some((monster) => monster.x === x && monster.y === y)) { setHp((value) => Math.max(0, value - 1)); log("黑暗里的东西撞上了你，你受了伤。", "danger"); }
   };
 
-  const isWalkable = (tile?: Tile) => Boolean(tile && ["grass", "torch"].includes(tile.type));
+  const isWalkable = (tile?: Tile) => Boolean(tile && ["grass", "torch", "door-open"].includes(tile.type));
   const isMineable = (tile?: Tile) => Boolean(tile && ["tree", "stone", "dirt", "torch"].includes(tile.type));
   const isPlaceable = (tile?: Tile) => Boolean(tile && tile.type === "grass");
   const findPath = (target: Point) => {
@@ -441,6 +441,7 @@ const loadArchives = async () => { try { const response = await fetch(`${API_BAS
     const tile = world[y]?.[x];
     if (!tile || tile.type === "unknown") { showNotice("那里还没有被探索。先沿着已知区域前进。"); return; }
     dismissTutorialForAction();
+    if (tile.type === "switch-off" || tile.type === "switch-on") { if (canReach(x, y)) { void sendCommand({ command: "toggle", x: x + worldOrigin.x, y: y + worldOrigin.y }); } else startPathTo(x, y, "move"); return; }
     if (shiftHeld && isPlaceable(tile)) {
       if (canReach(x, y)) executePlace(x, y); else startPathTo(x, y, "place");
       return;

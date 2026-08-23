@@ -57,6 +57,7 @@ impl World {
             PlayerCommand::Move(direction) => self.move_player(direction),
             PlayerCommand::BreakAt(pos) => self.break_at(pos),
             PlayerCommand::PlaceAt(pos, block) => self.place_at(pos, block),
+            PlayerCommand::ToggleAt(pos) => self.toggle_at(pos),
             PlayerCommand::Wait => self.events.push(WorldEvent::Message("你等待了一回合。".into())),
             PlayerCommand::Reset => { *self = Self::new(INITIAL_WIDTH as u32, INITIAL_HEIGHT as u32); self.events.push(WorldEvent::Message("世界重新开始了。".into())); }
         }
@@ -101,8 +102,24 @@ impl World {
     }
 
     fn block_at(&self, pos: Pos) -> Block { self.modified.get(&pos).copied().unwrap_or_else(|| Self::generated_block(pos)) }
-    fn walkable(block: Block) -> bool { matches!(block, Block::Grass | Block::Torch) }
+    fn walkable(block: Block) -> bool { matches!(block, Block::Grass | Block::Torch | Block::DoorOpen) }
     fn set_block(&mut self, pos: Pos, block: Block) { self.modified.insert(pos, block); }
+    fn toggle_at(&mut self, pos: Pos) {
+        if self.player.distance(pos) > 1 { self.events.push(WorldEvent::Message("你够不到那个开关。".into())); return; }
+        match self.block_at(pos) {
+            Block::SwitchOff => { self.set_block(pos, Block::SwitchOn); self.events.push(WorldEvent::SignalChanged { pos, powered: true }); self.resolve_signals(); }
+            Block::SwitchOn => { self.set_block(pos, Block::SwitchOff); self.events.push(WorldEvent::SignalChanged { pos, powered: false }); self.resolve_signals(); }
+            _ => self.events.push(WorldEvent::Message("那里没有可以切换的开关。".into())),
+        }
+    }
+    fn resolve_signals(&mut self) {
+        let switches = self.modified.iter().filter_map(|(pos, block)| (*block == Block::SwitchOn).then_some(*pos)).collect::<Vec<_>>();
+        let mut powered = HashMap::new(); let mut queue = VecDeque::new();
+        for pos in switches { queue.push_back(pos); powered.insert(pos, true); }
+        while let Some(pos) = queue.pop_front() { for next in [Pos::new(pos.x - 1, pos.y), Pos::new(pos.x + 1, pos.y), Pos::new(pos.x, pos.y - 1), Pos::new(pos.x, pos.y + 1)] { if !powered.contains_key(&next) && matches!(self.block_at(next), Block::Wire | Block::DoorClosed | Block::DoorOpen) { powered.insert(next, true); queue.push_back(next); } } }
+        let doors = self.modified.iter().filter_map(|(pos, block)| matches!(block, Block::DoorClosed | Block::DoorOpen).then_some(*pos)).collect::<Vec<_>>();
+        for pos in doors { let open = powered.contains_key(&pos); let next = if open { Block::DoorOpen } else { Block::DoorClosed }; if self.block_at(pos) != next { self.set_block(pos, next); self.events.push(WorldEvent::DoorChanged { pos, open }); } }
+    }
     fn visible(&self, pos: Pos, radius: i32) -> bool { pos.distance(self.player) <= radius && self.line_of_sight(pos) }
     fn torch_lights(&self, pos: Pos) -> bool { self.modified.iter().any(|(torch, block)| *block == Block::Torch && torch.distance(pos) <= 4 && self.line_of_sight_from(*torch, pos)) }
     fn is_sheltered(&self) -> bool {
@@ -203,11 +220,11 @@ impl World {
         if self.player.distance(target) > 1 { self.events.push(WorldEvent::Message("你够不到那里。".into())); return; }
         if !matches!(self.block_at(target), Block::Grass) { self.events.push(WorldEvent::Message("这里只能在空草地上放置。".into())); return; }
         if !self.remove_item(item) { self.events.push(WorldEvent::Message("你的材料不够。".into())); return; }
-        let block = match item { PlaceBlock::WoodWall => Block::Wall, PlaceBlock::Stone => Block::StoneWall, PlaceBlock::Dirt => Block::PlacedDirt, PlaceBlock::Torch => Block::Torch };
+        let block = match item { PlaceBlock::WoodWall => Block::Wall, PlaceBlock::Stone => Block::StoneWall, PlaceBlock::Dirt => Block::PlacedDirt, PlaceBlock::Torch => Block::Torch, PlaceBlock::Switch => Block::SwitchOff, PlaceBlock::Wire => Block::Wire, PlaceBlock::Door => Block::DoorClosed };
         self.set_block(target, block); self.events.push(WorldEvent::BlockPlaced { pos: target, block });
     }
-    fn add_item(&mut self, item: PlaceBlock, amount: u8) { match item { PlaceBlock::WoodWall => self.inventory.wood += amount as u32, PlaceBlock::Stone => self.inventory.stone += amount as u32, PlaceBlock::Dirt => self.inventory.dirt += amount as u32, PlaceBlock::Torch => self.inventory.torch += amount as u32 } }
-    fn remove_item(&mut self, item: PlaceBlock) -> bool { let value = match item { PlaceBlock::WoodWall => &mut self.inventory.wood, PlaceBlock::Stone => &mut self.inventory.stone, PlaceBlock::Dirt => &mut self.inventory.dirt, PlaceBlock::Torch => &mut self.inventory.torch }; if *value == 0 { false } else { *value -= 1; true } }
+    fn add_item(&mut self, item: PlaceBlock, amount: u8) { match item { PlaceBlock::WoodWall => self.inventory.wood += amount as u32, PlaceBlock::Stone => self.inventory.stone += amount as u32, PlaceBlock::Dirt => self.inventory.dirt += amount as u32, PlaceBlock::Torch => self.inventory.torch += amount as u32, _ => {} } }
+    fn remove_item(&mut self, item: PlaceBlock) -> bool { match item { PlaceBlock::Switch | PlaceBlock::Wire | PlaceBlock::Door => true, _ => { let value = match item { PlaceBlock::WoodWall => &mut self.inventory.wood, PlaceBlock::Stone => &mut self.inventory.stone, PlaceBlock::Dirt => &mut self.inventory.dirt, PlaceBlock::Torch => &mut self.inventory.torch, _ => unreachable!() }; if *value == 0 { false } else { *value -= 1; true } } } }
 }
 
 #[cfg(test)]
@@ -231,4 +248,5 @@ mod tests {
     #[test] fn empty_health_bar_consumes_one_life_and_respawns() { let mut world = World::new(20, 12); for _ in 0..MAX_HP { world.hurt_player(); } let snapshot = world.snapshot(); assert_eq!(snapshot.lives, STARTING_LIVES - 1); assert_eq!(snapshot.hp, MAX_HP); assert_eq!(snapshot.player, SPAWN_POINT); assert!(world.drain_events().contains(&WorldEvent::PlayerRespawned { pos: SPAWN_POINT })); }
     #[test] fn monster_attack_happens_when_player_moves_next_to_it() { let mut world = World::new(20, 12); world.inventory.torch = 0; world.monsters.push(Pos::new(11, 6)); world.tick = 16; world.night = true; world.apply(PlayerCommand::Move(Direction::Right)); assert_eq!(world.snapshot().hp, MAX_HP - 1); }
     #[test] fn wall_forces_monster_to_reroute_toward_an_opening() { let mut world = World::new(20, 12); world.inventory.torch = 0; world.set_block(Pos::new(10, 6), Block::Wall); world.monsters.push(Pos::new(11, 6)); world.tick = 16; world.night = true; world.tick(); assert_eq!(world.snapshot().monsters, vec![Pos::new(11, 5)]); assert_eq!(world.snapshot().hp, MAX_HP); assert!(world.drain_events().iter().any(|event| matches!(event, WorldEvent::MonsterRerouted { from, to } if *from == Pos::new(11, 6) && *to == Pos::new(11, 5)))); }
+    #[test] fn powered_switch_opens_a_door_through_wire() { let mut world = World::new(20, 12); let switch = Pos::new(10, 6); let door = Pos::new(12, 6); world.set_block(switch, Block::SwitchOff); world.set_block(Pos::new(11, 6), Block::Wire); world.set_block(door, Block::DoorClosed); world.apply(PlayerCommand::ToggleAt(switch)); assert_eq!(world.block_at(door), Block::DoorOpen); assert!(world.drain_events().iter().any(|event| matches!(event, WorldEvent::DoorChanged { pos, open: true } if *pos == door))); }
 }
