@@ -31,7 +31,7 @@ pub enum PlaceBlock { WoodWall, Stone, Dirt, Torch, Switch, Wire, Door }
 pub enum PlayerCommand { Move(Direction), BreakAt(Pos), PlaceAt(Pos, PlaceBlock), ToggleAt(Pos), Wait, Reset }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Intent { Move(Direction), Break, Place(PlaceBlock), Wait }
+pub enum Intent { Move(Direction), BreakAt(Pos), PlaceAt(Pos, PlaceBlock), Toggle(Pos), Wait }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WorldEvent {

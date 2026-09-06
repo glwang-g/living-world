@@ -1,5 +1,6 @@
 //! Restricted agent contract. Bots receive an observation and return one intent;
-//! the core remains the only authority that can change the world.
+//! the core remains the only authority that can change the world. A targeted
+//! toggle may only name a position the authoritative core will validate.
 
 use world_protocol::{Direction, Intent, Observation};
 

@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use world_protocol::{Block, Direction, EventRecord, Inventory, Observation, PlaceBlock, PlayerCommand, Pos, WorldEvent, WorldSnapshot};
-use world_runner::WorldRunner;
+use world_runner::{project_rule_mission_event, RuleMissionEvent, WorldRunner};
 
 const ADDRESS: &str = "127.0.0.1:8787";
 const MONSTER_TURN_DURATION: Duration = Duration::from_secs(5);
@@ -128,6 +128,20 @@ mod tests {
         assert_eq!(seconds, 10 * 60);
         assert_eq!((17..=24).map(|tick| world_hour_duration(tick).as_secs()).sum::<u64>(), 2 * 60);
     }
+
+    #[test]
+    fn rule_mission_response_preserves_the_shared_event_fields() {
+        let mission = RuleMissionEvent {
+            tick: 7,
+            actor: "learner".into(),
+            action: "toggle_switch".into(),
+            facts: vec!["switch is on".into()],
+            consequences: vec!["door opened".into()],
+            visible_to: vec!["learner".into(), "history".into()],
+        };
+        assert_eq!(rule_mission_json(&mission), "{\"tick\":7,\"actor\":\"learner\",\"action\":\"toggle_switch\",\"facts\":[\"switch is on\"],\"consequences\":[\"door opened\"],\"visible_to\":[\"learner\",\"history\"]}");
+        assert_eq!(command_response_json(&[mission]), "{\"accepted\":true,\"rule_missions\":[{\"tick\":7,\"actor\":\"learner\",\"action\":\"toggle_switch\",\"facts\":[\"switch is on\"],\"consequences\":[\"door opened\"],\"visible_to\":[\"learner\",\"history\"]}]}");
+    }
 }
 
 fn handle_connection(mut stream: TcpStream, runner: Arc<Mutex<WorldRunner>>, persistence: Persistence) {
@@ -174,9 +188,11 @@ fn handle_connection(mut stream: TcpStream, runner: Arc<Mutex<WorldRunner>>, per
                 }
                 runner.command(command);
                 let events = runner.world.drain_events();
+                let tick = runner.world.snapshot().tick;
+                let missions = events.iter().map(|event| project_rule_mission_event(tick, event)).collect::<Vec<_>>();
                 persistence.save(&runner, &events);
                 if is_reset { announce_new_world(); }
-                ("200 OK", "{\"accepted\":true}".to_string())
+                ("200 OK", command_response_json(&missions))
             }
             else { ("400 Bad Request", "{\"accepted\":false}".to_string()) }
         }
@@ -225,6 +241,13 @@ fn event_record(tick: u64, event: &WorldEvent) -> EventRecord { let (actor, kind
 fn place_name(item: PlaceBlock) -> &'static str { match item { PlaceBlock::WoodWall => "木材", PlaceBlock::Stone => "石头", PlaceBlock::Dirt => "泥土", PlaceBlock::Torch => "火把", PlaceBlock::Switch => "开关", PlaceBlock::Wire => "导线", PlaceBlock::Door => "门" } }
 fn location_text(location: Option<Pos>) -> String { location.map(|pos| format!("{},{}", pos.x, pos.y)).unwrap_or_else(|| "-".into()) }
 fn json_escape(value: &str) -> String { value.replace('\\', "\\\\").replace('"', "\\\"") }
+fn rule_mission_json(event: &RuleMissionEvent) -> String {
+    let strings = |values: &[String]| values.iter().map(|value| format!("\"{}\"", json_escape(value))).collect::<Vec<_>>().join(",");
+    format!("{{\"tick\":{},\"actor\":\"{}\",\"action\":\"{}\",\"facts\":[{}],\"consequences\":[{}],\"visible_to\":[{}]}}", event.tick, json_escape(&event.actor), json_escape(&event.action), strings(&event.facts), strings(&event.consequences), strings(&event.visible_to))
+}
+fn command_response_json(missions: &[RuleMissionEvent]) -> String {
+    format!("{{\"accepted\":true,\"rule_missions\":[{}]}}", missions.iter().map(rule_mission_json).collect::<Vec<_>>().join(","))
+}
 fn events_page_json(path: &Path, offset: usize, limit: usize, day: Option<u64>) -> String { let Ok(text) = fs::read_to_string(path) else { return "{\"total\":0,\"offset\":0,\"events\":[]}".into() }; let records = text.lines().filter_map(event_json).collect::<Vec<_>>(); let total = records.len(); let offset = day.map(|day| records.iter().position(|event| event_day(event) >= day).unwrap_or_else(|| total.saturating_sub(limit))).unwrap_or(offset).min(total); let events = records.iter().skip(offset).take(limit).cloned().collect::<Vec<_>>().join(","); format!("{{\"total\":{total},\"offset\":{offset},\"events\":[{events}]}}") }
 fn event_day(event: &str) -> u64 { event.split_once("\"tick\":").and_then(|(_, rest)| rest.split_once(',')).and_then(|(tick, _)| tick.parse::<u64>().ok()).map(world_day).unwrap_or(1) }
 fn event_json(line: &str) -> Option<String> { let parts = line.splitn(5, '|').collect::<Vec<_>>(); if parts.len() == 5 { let tick = parts[0].parse::<u64>().ok()?; let location = if parts[3] == "-" { "null".into() } else { let coords = parts[3].split_once(',')?; format!("{{\"x\":{},\"y\":{}}}", coords.0, coords.1) }; return Some(format!("{{\"tick\":{},\"actor\":\"{}\",\"kind\":\"{}\",\"location\":{},\"text\":\"{}\"}}", tick, json_escape(parts[2]), json_escape(parts[1]), location, json_escape(parts[4]))); } let tick = line.strip_prefix("tick=")?.split_once(" event=")?.0.parse::<u64>().ok()?; let text = line.split_once(" event=")?.1; Some(format!("{{\"tick\":{},\"actor\":\"world\",\"kind\":\"legacy\",\"location\":null,\"text\":\"{}\"}}", tick, json_escape(text))) }

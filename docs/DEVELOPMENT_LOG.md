@@ -3,6 +3,14 @@
 > 后续接手本项目时，优先阅读本文件最新一节，再阅读 [`PROJECT_ANCHOR.md`](./PROJECT_ANCHOR.md)。
 > `PROJECT_HANDOFF.md` 记录的是早期 MUD/居民原型，和当前 ComputerScienceWorld 方块世界方向并不完全一致。
 
+## 2026-09-04：Rule Mission 即时回执接入浏览器
+
+- 权威 `world-server` 在接受 `/api/command` 后，除兼容的 `accepted` 外同步返回由本次原生事件投影出的 `rule_missions`；字段与 Freexlib 共享形态一致：`tick / actor / action / facts / consequences / visible_to`。
+- 浏览器会把最后一条投影显示为短暂的“规则回执”，把 `toggle_switch`、门状态、地形变化、背包变化等翻译成中文的即时因果反馈。
+- 即时回执不写入前端长期日志；长期历史仍只从 `/api/events` 获取，避免命令返回与下一轮同步造成重复记录。
+- 命令回执 JSON 由独立纯函数组装并单测，锁定 `{ accepted: true, rule_missions: [...] }` 的兼容与完整字段语义。
+- 已验证：`npm test`、`npm run lint`、`cargo test --manifest-path engine/Cargo.toml`（2026-09-04 回归通过）。
+
 ## 2026-08-08：README 同步与 Freexlib 世界契约
 
 - README 已从旧聚落原型描述更新为当前 ComputerScienceWorld 方块世界 + Rust 引擎方向。

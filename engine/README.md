@@ -15,6 +15,11 @@ The first prototype is deliberately renderer-independent. The next adapter can
 expose `WorldRunner` through HTTP/WebSocket while the browser only sends
 commands and renders `WorldSnapshot`.
 
+Bots follow the same boundary: they read an `Observation` and submit one
+`Intent` (`Move`, `BreakAt`, `PlaceAt`, `Toggle`, or `Wait`). A target supplied
+by an intent is only a request; range, block type, inventory, signal
+propagation, and every resulting event remain validated by `world-core`.
+
 ## Run tests
 
 ```bash
@@ -33,6 +38,16 @@ npm run world:server
 The browser in another terminal is then started with `npm run dev` and reads
 `http://127.0.0.1:8787/api/snapshot`. It sends player actions to
 `/api/command`; it does not own the authoritative tick.
+
+### Command acknowledgement and Rule Mission projection
+
+`POST /api/command` keeps the compatibility field `{ "accepted": true }` and
+also returns `rule_missions`: the immediate projection of the authoritative
+events caused by that command. Each item uses the cross-project shape
+`tick / actor / action / facts / consequences / visible_to`. The browser shows
+this only as a short-lived "规则回执"; `/api/events` remains the sole persisted
+history source, so an acknowledgement can never create a duplicate history
+entry in the client.
 
 World time follows the early-Minecraft cadence: one world hour advances every
 50 real seconds, so one 24-hour world day takes 20 real minutes.

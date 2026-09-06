@@ -10,6 +10,7 @@ type LogEntry = { day: number; text: string; tone?: "danger" | "build" | "system
 type Block = "wood" | "stone" | "dirt" | "torch" | "switch" | "wire" | "door";
 type ServerSnapshot = { tick: number; origin_x: number; origin_y: number; width: number; height: number; blocks: TileType[]; player: Point; hp: number; lives: number; inventory: Record<Block, number>; monsters: Point[]; sounds: string[]; night: boolean; sheltered: boolean; torch_lit: boolean };
 type ServerEvent = { tick: number; actor: string; kind: string; location: Point | null; text: string };
+type RuleMissionEvent = { tick: number; actor: string; action: string; facts: string[]; consequences: string[]; visible_to: string[] };
 type ArchiveSummary = { id: string; name: string; day: number };
 type HistoryPage = { total: number; offset: number; events: ServerEvent[] };
 const HISTORY_PAGE_SIZE = 30;
@@ -32,6 +33,20 @@ const tileIcon: Record<TileType, string> = { grass: "", tree: "🌲", stone: "�
 const SAVE_KEY = "living-world:blockworld:v1";
 const API_BASE = "/api";
 const initialLogs: LogEntry[] = [{ day: 1, text: "你在一片陌生的草地醒来。太阳正在落山，最好在夜晚前搭一面墙。", tone: "system" }];
+const ruleMissionActionLabel: Record<string, string> = { toggle_switch: "开关", resolve_signal: "信号", move: "移动", break: "采集", place: "建造", collect: "收集", advance_time: "时间", message: "世界消息", resolve_world: "世界演算" };
+const ruleMissionConsequenceLabel: Record<string, string> = { "signal propagation resolved": "信号传播已结算", "door opened": "门已打开", "door closed": "门已关闭", "new local observation": "已获得新的局部观察", "world terrain changed": "地形已更新", "inventory increased": "背包已更新", "visibility and threats changed": "可见范围与威胁已改变", "visibility changed": "可见范围已改变", "world state advanced": "世界状态已推进" };
+const ruleMissionNotice = (mission: RuleMissionEvent) => {
+  const action = ruleMissionActionLabel[mission.action] ?? mission.action;
+  const consequence = mission.consequences.map((item) => ruleMissionConsequenceLabel[item] ?? item).find(Boolean);
+  return consequence ? `规则回执 · ${action}：${consequence}` : `规则回执 · ${action}已生效`;
+};
+
+function suggestedArchiveName({ built, day, sheltered, torchLit }: { built: number; day: number; sheltered: boolean; torchLit: boolean }) {
+  if (sheltered) return `封闭防线 · 第${day}天`;
+  if (torchLit) return `火把与窄口 · 第${day}天`;
+  if (built) return `未完成的防线 · 第${day}天`;
+  return `黑暗中的第一夜 · 第${day}天`;
+}
 
 export default function Home() {
   const [world, setWorld] = useState(makeWorld);
@@ -100,6 +115,7 @@ export default function Home() {
   const day = Math.floor((tick - 1) / 24) + 1;
   const hour = (tick - 1) % 24;
   const night = hour >= 16 || hour < 5;
+  const archiveNameSuggestion = suggestedArchiveName({ built, day, sheltered, torchLit });
 
   useLayoutEffect(() => {
     const pending = historyPrependRef.current;
@@ -233,8 +249,12 @@ export default function Home() {
     try {
       const response = await fetch(`${API_BASE}/command`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
       if (!response.ok) { log("世界服务拒绝了这个操作，请重启 world-server 后再试。", "danger"); return false; }
-      const result = await response.json() as { accepted?: boolean };
+      const result = await response.json() as { accepted?: boolean; rule_missions?: RuleMissionEvent[] };
       if (result.accepted !== true) { log("世界服务没有接受这个操作，请确认后端已更新。", "danger"); return false; }
+      // The persisted event stream remains the only source for long-term history.
+      // This is deliberately transient feedback for the command just acknowledged.
+      const mission = result.rule_missions?.at(-1);
+      if (mission) showNotice(ruleMissionNotice(mission));
       return true;
     } catch { setServerOnline(false); log("与世界服务的连接中断了。", "danger"); return false; }
   };
@@ -299,7 +319,7 @@ export default function Home() {
   const saveArchive = async () => {
     if (archiveSaved) return;
     if (!serverOnline) { showNotice("世界服务未连接，暂时无法保存档案。"); return; }
-    const name = archiveName.trim() || `第${day}天的防线`;
+    const name = archiveName.trim() || archiveNameSuggestion;
     try {
       const response = await fetch(`${API_BASE}/archive`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) });
       if (!response.ok) throw new Error("archive rejected");
@@ -476,11 +496,6 @@ const loadArchives = async () => { try { const response = await fetch(`${API_BAS
     scrollToTop();
   }, [helpOpen]);
 
-  useEffect(() => {
-    if (lives !== 0 || archiveName) return;
-    setArchiveName(sheltered ? `封闭防线 · 第${day}天` : torchLit ? `火把与窄口 · 第${day}天` : built ? `未完成的防线 · 第${day}天` : `黑暗中的第一夜 · 第${day}天`);
-  }, [archiveName, built, day, lives, sheltered, torchLit]);
-
   const baseObjective = sheltered ? "你的墙封住了入口：可以在里面观察怪物如何寻找路径。" : torchLit ? "火把已建立安全半径；再用墙把怪物的路线压缩到一个入口。" : night ? "夜晚来了：火把会驱离怪物，墙会迫使它绕行。" : `在夜晚前试着做出一条防线（还需要 ${Math.max(0, 8 - built)} 个方块）`;
   const objective = sounds.length ? `${baseObjective} ${sounds.join(" ")}` : baseObjective;
   const defenseReadout = !night ? "白天：采集材料，观察地形，为夜晚准备一条可控入口。" : sheltered ? "防线闭合：怪物无法找到进入路线。" : torchLit ? "火光生效：附近怪物会撤退，墙能改变它的绕行路线。" : monsters.length ? "威胁可见：怪物正按可通行格寻路接近。" : "夜晚：注意黑暗中传来的脚步声。";
@@ -509,7 +524,7 @@ const loadArchives = async () => { try { const response = await fetch(`${API_BAS
       <section className="world-console">
         <div className="world-toolbar"><div><span className={"sun-dot " + (night ? "moon" : "")}></span>{night ? "夜晚" : "白天"} · {String(hour).padStart(2, "0")}:00</div><div className={"server-status " + (serverOnline ? "online" : "offline")} aria-label={serverOnline ? "世界服务已连接" : "世界服务未连接"}><span></span>{serverOnline ? "世界持续运行" : "等待世界服务"}</div></div>
         {notice && <div className="world-notice" role="status">⚠ {notice}</div>}
-        {gameOver && <section className="game-over" role="dialog" aria-modal="true" aria-labelledby="game-over-title"><p className="eyebrow">WORLD ENDED · 第 {day} 天</p><h2 id="game-over-title">这一次冒险结束了</h2><p>三条生命都耗尽了。给这个世界留一个名字，重开后它仍会作为档案被保留。</p><label className="archive-name"><span>世界档案名称</span><input value={archiveName} maxLength={40} onChange={(event) => setArchiveName(event.target.value)} placeholder="例如：火把与窄口" disabled={archiveSaved} /></label><div className="final-events"><strong>最后的世界事件</strong>{finalEvents.length ? finalEvents.map((entry, index) => <span key={entry.text + index}>第{entry.day}天　{entry.text}</span>) : <span>黑暗吞没了最后一处可见的草地。</span>}</div><div className="game-over-actions"><button className="save-archive" onClick={saveArchive} disabled={archiveSaved}>{archiveSaved ? "档案已保存" : "保存世界档案"}</button><button className="restart-world" onClick={resetGame}>重新开始</button><button className="review-history" onClick={() => { setMode("history"); void loadArchives(); void loadLiveHistory(); }}>查看世界历史</button></div></section>}
+        {gameOver && <section className="game-over" role="dialog" aria-modal="true" aria-labelledby="game-over-title"><p className="eyebrow">WORLD ENDED · 第 {day} 天</p><h2 id="game-over-title">这一次冒险结束了</h2><p>三条生命都耗尽了。给这个世界留一个名字，重开后它仍会作为档案被保留。</p><label className="archive-name"><span>世界档案名称</span><input value={archiveName} maxLength={40} onChange={(event) => setArchiveName(event.target.value)} placeholder={archiveNameSuggestion} disabled={archiveSaved} /></label><div className="final-events"><strong>最后的世界事件</strong>{finalEvents.length ? finalEvents.map((entry, index) => <span key={entry.text + index}>第{entry.day}天　{entry.text}</span>) : <span>黑暗吞没了最后一处可见的草地。</span>}</div><div className="game-over-actions"><button className="save-archive" onClick={saveArchive} disabled={archiveSaved}>{archiveSaved ? "档案已保存" : "保存世界档案"}</button><button className="restart-world" onClick={resetGame}>重新开始</button><button className="review-history" onClick={() => { setMode("history"); void loadArchives(); void loadLiveHistory(); }}>查看世界历史</button></div></section>}
         <div className="world-viewport" aria-label="可以移动和编辑的方块世界">
         <section className={"mobile-world-hud " + (mobileHudExpanded ? "expanded" : "")} aria-label="角色与世界状态">
           <button className="mobile-world-hud-toggle" aria-expanded={mobileHudExpanded} onClick={() => setMobileHudExpanded((value) => !value)}>
